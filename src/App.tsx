@@ -144,6 +144,10 @@ export default function App() {
   useEffect(() => {
     if (user) {
       loadAllData();
+      // Reset to home page after login (handleLogout sets it to 'login')
+      if (currentPage === 'login') {
+        setCurrentPage('home');
+      }
     }
   }, [user, loadAllData]);
 
