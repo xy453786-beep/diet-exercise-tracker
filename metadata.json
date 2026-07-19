@@ -1,0 +1,10 @@
+{
+  "name": "健康管理 App",
+  "description": "移动端健康管理应用程序，提供饮食记录、运动管理、体重追踪与AI膳食分析深度建议，采用高保真移动端优先交互布局。",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
