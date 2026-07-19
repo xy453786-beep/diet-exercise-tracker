@@ -5,9 +5,16 @@ import { dirname, resolve } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Dev only: load .env from project root BEFORE importing app
-// (Dynamic import ensures dotenv runs before the module graph resolves)
+// Dev only: load .env from project root before anything else
 dotenv.config({ path: resolve(__dirname, '../.env') });
+
+// WebSocket polyfill for local dev (Node 20).
+// In production (Netlify Functions), supabase-js works fine without WebSocket
+// because the backend only uses REST API calls (no Realtime features).
+import WebSocket from 'ws';
+if (typeof globalThis.WebSocket === 'undefined') {
+  (globalThis as any).WebSocket = WebSocket;
+}
 
 const { createApp } = await import('./app.js');
 
