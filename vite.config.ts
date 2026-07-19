@@ -6,14 +6,16 @@ import {defineConfig} from 'vite';
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
+    // GitHub Pages deploys to subdirectory: /diet-exercise-tracker/
+    base: '/diet-exercise-tracker/',
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
     },
     server: {
-      // Proxy API requests to Express backend
-      proxy: {
+      // Proxy API requests to Express backend (local dev only)
+      proxy: process.env.VITE_DISABLE_PROXY ? undefined : {
         '/api': {
           target: 'http://localhost:3001',
           changeOrigin: true,
