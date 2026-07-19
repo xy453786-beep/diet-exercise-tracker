@@ -1,21 +1,15 @@
-import dotenv from 'dotenv';
-import { fileURLToPath } from 'url';
-import { dirname, resolve } from 'path';
 import WebSocket from 'ws';
 
 // Polyfill WebSocket for Node.js 20 (native WebSocket requires Node 22+)
+// Must run before @supabase/supabase-js is imported.
+// In dev: dotenv is loaded by server/index.ts before this module is resolved.
+// In production (Netlify Functions): env vars are injected by the platform.
 if (typeof globalThis.WebSocket === 'undefined') {
   (globalThis as any).WebSocket = WebSocket;
 }
 
 // Dynamic import after polyfill
 const { createClient } = await import('@supabase/supabase-js');
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// Load .env from project root (server/supabase/../../.env)
-dotenv.config({ path: resolve(__dirname, '../../.env') });
 
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
