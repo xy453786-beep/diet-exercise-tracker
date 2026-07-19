@@ -320,6 +320,8 @@ export default function App() {
     const apiKey = getGeminiApiKey();
     if (!apiKey) {
       // No API key configured, fall back to preset data
+      console.warn('VITE_GEMINI_API_KEY 未配置，使用默认数据');
+      setGeminiError('未配置 Gemini API Key（缺少 VITE_GEMINI_API_KEY 环境变量）');
       setActiveScanPresetIndex(0);
       setEditingScanResult(true);
       return;
