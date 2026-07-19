@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Minus, Trash2, Sparkles, Scale, Utensils } from 'lucide-react';
+import { X, Plus, Minus, Trash2, Sparkles, Scale, Utensils, Loader2 } from 'lucide-react';
 import { AIDietAnalysis, MealCategory } from '../types';
+import type { GeminiFoodAnalysis } from '../api/gemini';
 
 interface EditableIngredient {
   id: string;
@@ -17,6 +18,8 @@ interface AIScanEditModalProps {
   presetIndex: number;
   category: MealCategory;
   capturedImage?: string | null;
+  geminiAnalysis?: GeminiFoodAnalysis | null;
+  geminiLoading?: boolean;
   onClose: () => void;
   onConfirm: (finalAnalysis: AIDietAnalysis) => void;
 }
@@ -26,15 +29,32 @@ export default function AIScanEditModal({
   presetIndex,
   category,
   capturedImage,
+  geminiAnalysis,
+  geminiLoading,
   onClose,
   onConfirm,
 }: AIScanEditModalProps) {
   const [mealName, setMealName] = useState('');
   const [ingredients, setIngredients] = useState<EditableIngredient[]>([]);
 
-  // Initialize data based on presetIndex when modal is opened
+  // Initialize data based on presetIndex or Gemini analysis
   useEffect(() => {
     if (!isOpen) return;
+
+    // Gemini AI analysis data
+    if (presetIndex === -1 && geminiAnalysis) {
+      setMealName(geminiAnalysis.mealName);
+      setIngredients(geminiAnalysis.ingredients.map((ing, i) => ({
+        id: `gemini-${i}-${Date.now()}`,
+        name: ing.name,
+        weight: ing.weight,
+        caloriesPerGram: ing.weight > 0 ? ing.calories / ing.weight : 0,
+        proteinPerGram: ing.weight > 0 ? ing.protein / ing.weight : 0,
+        carbsPerGram: ing.weight > 0 ? ing.carbs / ing.weight : 0,
+        fatPerGram: ing.weight > 0 ? ing.fat / ing.weight : 0,
+      })));
+      return;
+    }
 
     if (presetIndex === 0) {
       setMealName('香煎三文鱼藜麦碗');
@@ -112,6 +132,27 @@ export default function AIScanEditModal({
 
   if (!isOpen) return null;
 
+  // Loading state while waiting for Gemini
+  if (geminiLoading) {
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl w-full max-w-[380px] p-8 shadow-2xl flex flex-col items-center gap-4">
+          <div className="w-12 h-12 rounded-full bg-[#8B5CF6]/10 flex items-center justify-center">
+            <Loader2 size={28} className="text-[#8B5CF6] animate-spin" />
+          </div>
+          <div className="text-center">
+            <h3 className="text-base font-bold text-gray-900">AI 正在分析食物...</h3>
+            <p className="text-xs text-gray-500 mt-1">Gemini 2.5 Flash 识别食材并估算营养成分</p>
+          </div>
+          <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-[#8B5CF6] to-[#7C3AED] animate-loading-bar rounded-full" style={{width: '60%'}} />
+          </div>
+        </div>
+        <style>{`@keyframes loadingBar { 0% { width: 0%; } 50% { width: 70%; } 100% { width: 95%; } } .animate-loading-bar { animation: loadingBar 2.5s ease-in-out infinite; }`}</style>
+      </div>
+    );
+  }
+
   // Handle Weight Change
   const handleWeightChange = (id: string, newWeight: number) => {
     const validWeight = Math.max(0, newWeight);
@@ -185,8 +226,10 @@ export default function AIScanEditModal({
       carbs: { amount: Math.round(totalCarbs), percentage: carbsPercent },
       fat: { amount: Math.round(totalFat), percentage: fatPercent > 0 ? fatPercent : 0 },
       suggestions: {
-        optimization: `经过调整后的这餐${categoryName}总热量为 ${totalCalories} kcal。蛋白质占比 ${proteinPercent}%，比例适中。建议配合足够的水分，在下一餐适量增加高纤维蔬菜，更有利于肠道代谢。`,
-        exercise: `该餐富含能量与营养储备，建议在餐后 1.5 小时进行 40 分钟的有氧慢跑或 30 分钟的高效全身抗阻力量训练，将碳水化合物充分转化为肌糖原。`,
+        optimization: geminiAnalysis?.suggestion ||
+          `经过调整后的这餐${categoryName}总热量为 ${totalCalories} kcal。蛋白质占比 ${proteinPercent}%，比例适中。建议配合足够的水分，在下一餐适量增加高纤维蔬菜，更有利于肠道代谢。`,
+        exercise: geminiAnalysis?.exercise ||
+          `该餐富含能量与营养储备，建议在餐后 1.5 小时进行 40 分钟的有氧慢跑或 30 分钟的高效全身抗阻力量训练，将碳水化合物充分转化为肌糖原。`,
       },
       ingredients: ingredients.map((ing) => ({
         name: ing.name,

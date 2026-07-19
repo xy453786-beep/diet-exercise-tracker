@@ -7,6 +7,7 @@ import { dayLabelToDate, dateToDayLabel, getCurrentWeekRange } from './utils/dat
 import * as endpoints from './api/endpoints';
 import LoginPage from './components/LoginPage';
 import { Camera } from 'lucide-react';
+import { analyzeFoodImage, getGeminiApiKey, type GeminiFoodAnalysis } from './api/gemini';
 
 import Header from './components/Header';
 import TabBar from './components/TabBar';
@@ -62,6 +63,9 @@ export default function App() {
   // ---- AI States ----
   const [activeScanPresetIndex, setActiveScanPresetIndex] = useState<number | null>(null);
   const [capturedFoodImage, setCapturedFoodImage] = useState<string | null>(null);
+  const [geminiLoading, setGeminiLoading] = useState(false);
+  const [geminiAnalysis, setGeminiAnalysis] = useState<GeminiFoodAnalysis | null>(null);
+  const [geminiError, setGeminiError] = useState<string | null>(null);
   const [editingScanResult, setEditingScanResult] = useState<boolean>(false);
   const [currentAIAnalysisData, setCurrentAIAnalysisData] = useState<AIDietAnalysis>(MOCK_AI_DIET_ANALYSIS);
 
@@ -308,11 +312,35 @@ export default function App() {
   };
 
   // ---- AI Handlers ----
-  const handleScanComplete = (imageDataUrl: string) => {
+  const handleScanComplete = async (imageDataUrl: string) => {
     setIsScannerOpen(false);
     setCapturedFoodImage(imageDataUrl);
-    setActiveScanPresetIndex(0);
-    setEditingScanResult(true);
+    setGeminiError(null);
+
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) {
+      // No API key configured, fall back to preset data
+      setActiveScanPresetIndex(0);
+      setEditingScanResult(true);
+      return;
+    }
+
+    // Call Gemini AI
+    setGeminiLoading(true);
+    try {
+      const analysis = await analyzeFoodImage(imageDataUrl, apiKey);
+      setGeminiAnalysis(analysis);
+      setActiveScanPresetIndex(-1); // Signal: use Gemini data
+      setEditingScanResult(true);
+    } catch (err: any) {
+      console.error('Gemini analysis failed:', err);
+      setGeminiError(err.message || 'AI 分析失败');
+      // Fall back to preset data
+      setActiveScanPresetIndex(0);
+      setEditingScanResult(true);
+    } finally {
+      setGeminiLoading(false);
+    }
   };
 
   const handleConfirmScanEdit = (finalAnalysis: AIDietAnalysis) => {
@@ -526,10 +554,14 @@ export default function App() {
               presetIndex={activeScanPresetIndex ?? 0}
               category={activeAddFoodCategory || 'lunch'}
               capturedImage={capturedFoodImage}
+              geminiAnalysis={geminiAnalysis}
+              geminiLoading={geminiLoading}
               onClose={() => {
                 setEditingScanResult(false);
                 setActiveScanPresetIndex(null);
                 setCapturedFoodImage(null);
+                setGeminiAnalysis(null);
+                setGeminiError(null);
                 setActiveAddFoodCategory(null);
               }}
               onConfirm={handleConfirmScanEdit}
