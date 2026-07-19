@@ -16,6 +16,7 @@ interface AIScanEditModalProps {
   isOpen: boolean;
   presetIndex: number;
   category: MealCategory;
+  capturedImage?: string | null;
   onClose: () => void;
   onConfirm: (finalAnalysis: AIDietAnalysis) => void;
 }
@@ -24,6 +25,7 @@ export default function AIScanEditModal({
   isOpen,
   presetIndex,
   category,
+  capturedImage,
   onClose,
   onConfirm,
 }: AIScanEditModalProps) {
@@ -192,9 +194,10 @@ export default function AIScanEditModal({
         calories: Math.round(ing.weight * ing.caloriesPerGram),
       })),
       image:
-        presetIndex === 0
+        capturedImage ||
+        (presetIndex === 0
           ? 'https://images.unsplash.com/photo-1467003909585-2f8a72700288?w=300&auto=format&fit=crop&q=80'
-          : 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=300&auto=format&fit=crop&q=80',
+          : 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=300&auto=format&fit=crop&q=80'),
     };
 
     onConfirm(finalAnalysis);

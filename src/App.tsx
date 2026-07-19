@@ -61,6 +61,7 @@ export default function App() {
 
   // ---- AI States ----
   const [activeScanPresetIndex, setActiveScanPresetIndex] = useState<number | null>(null);
+  const [capturedFoodImage, setCapturedFoodImage] = useState<string | null>(null);
   const [editingScanResult, setEditingScanResult] = useState<boolean>(false);
   const [currentAIAnalysisData, setCurrentAIAnalysisData] = useState<AIDietAnalysis>(MOCK_AI_DIET_ANALYSIS);
 
@@ -307,9 +308,10 @@ export default function App() {
   };
 
   // ---- AI Handlers ----
-  const handleScanComplete = (presetIndex: number) => {
+  const handleScanComplete = (imageDataUrl: string, presetIndex?: number) => {
     setIsScannerOpen(false);
-    setActiveScanPresetIndex(presetIndex);
+    setCapturedFoodImage(imageDataUrl);
+    setActiveScanPresetIndex(presetIndex ?? 0);
     setEditingScanResult(true);
   };
 
@@ -516,16 +518,18 @@ export default function App() {
                 setIsScannerOpen(false);
                 setActiveAddFoodCategory(null);
               }}
-              onScanComplete={handleScanComplete}
+              onCapture={handleScanComplete}
             />
 
             <AIScanEditModal
               isOpen={editingScanResult && activeScanPresetIndex !== null}
               presetIndex={activeScanPresetIndex ?? 0}
               category={activeAddFoodCategory || 'lunch'}
+              capturedImage={capturedFoodImage}
               onClose={() => {
                 setEditingScanResult(false);
                 setActiveScanPresetIndex(null);
+                setCapturedFoodImage(null);
                 setActiveAddFoodCategory(null);
               }}
               onConfirm={handleConfirmScanEdit}
