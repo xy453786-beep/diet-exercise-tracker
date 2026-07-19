@@ -7,7 +7,7 @@ import { dayLabelToDate, dateToDayLabel, getCurrentWeekRange } from './utils/dat
 import * as endpoints from './api/endpoints';
 import LoginPage from './components/LoginPage';
 import { Camera } from 'lucide-react';
-import { analyzeFoodImage, getGeminiApiKey, type GeminiFoodAnalysis } from './api/gemini';
+import { analyzeFoodImage, getZhipuApiKey, type ZhipuFoodAnalysis } from './api/zhipu';
 
 import Header from './components/Header';
 import TabBar from './components/TabBar';
@@ -64,7 +64,7 @@ export default function App() {
   const [activeScanPresetIndex, setActiveScanPresetIndex] = useState<number | null>(null);
   const [capturedFoodImage, setCapturedFoodImage] = useState<string | null>(null);
   const [geminiLoading, setGeminiLoading] = useState(false);
-  const [geminiAnalysis, setGeminiAnalysis] = useState<GeminiFoodAnalysis | null>(null);
+  const [geminiAnalysis, setGeminiAnalysis] = useState<ZhipuFoodAnalysis | null>(null);
   const [geminiError, setGeminiError] = useState<string | null>(null);
   const [editingScanResult, setEditingScanResult] = useState<boolean>(false);
   const [currentAIAnalysisData, setCurrentAIAnalysisData] = useState<AIDietAnalysis>(MOCK_AI_DIET_ANALYSIS);
@@ -317,27 +317,26 @@ export default function App() {
     setCapturedFoodImage(imageDataUrl);
     setGeminiError(null);
 
-    const apiKey = getGeminiApiKey();
+    const apiKey = getZhipuApiKey();
     if (!apiKey) {
       // No API key configured, fall back to preset data
-      console.warn('VITE_GEMINI_API_KEY 未配置，使用默认数据');
-      setGeminiError('未配置 Gemini API Key（缺少 VITE_GEMINI_API_KEY 环境变量）');
+      console.warn('VITE_ZHIPU_API_KEY 未配置，使用默认数据');
+      setGeminiError('未配置智谱 API Key（缺少 VITE_ZHIPU_API_KEY 环境变量）');
       setActiveScanPresetIndex(0);
       setEditingScanResult(true);
       return;
     }
 
-    // Call Gemini AI
+    // Call 智谱 GLM-4V
     setGeminiLoading(true);
     try {
       const analysis = await analyzeFoodImage(imageDataUrl, apiKey);
       setGeminiAnalysis(analysis);
-      setActiveScanPresetIndex(-1); // Signal: use Gemini data
+      setActiveScanPresetIndex(-1); // Signal: use AI data
       setEditingScanResult(true);
     } catch (err: any) {
-      console.error('Gemini analysis failed:', err);
+      console.error('智谱 AI 分析失败:', err);
       setGeminiError(err.message || 'AI 分析失败');
-      // Fall back to preset data
       setActiveScanPresetIndex(0);
       setEditingScanResult(true);
     } finally {

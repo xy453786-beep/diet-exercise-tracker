@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Plus, Minus, Trash2, Sparkles, Scale, Utensils, Loader2 } from 'lucide-react';
 import { AIDietAnalysis, MealCategory } from '../types';
-import type { GeminiFoodAnalysis } from '../api/gemini';
+import type { ZhipuFoodAnalysis } from '../api/zhipu';
 
 interface EditableIngredient {
   id: string;
@@ -18,7 +18,7 @@ interface AIScanEditModalProps {
   presetIndex: number;
   category: MealCategory;
   capturedImage?: string | null;
-  geminiAnalysis?: GeminiFoodAnalysis | null;
+  geminiAnalysis?: ZhipuFoodAnalysis | null;
   geminiLoading?: boolean;
   geminiError?: string | null;
   onClose: () => void;
@@ -144,7 +144,7 @@ export default function AIScanEditModal({
           </div>
           <div className="text-center">
             <h3 className="text-base font-bold text-gray-900">AI 正在分析食物...</h3>
-            <p className="text-xs text-gray-500 mt-1">Gemini 2.5 Flash 识别食材并估算营养成分</p>
+            <p className="text-xs text-gray-500 mt-1">智谱 GLM-4V 识别食材并估算营养成分</p>
           </div>
           <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
             <div className="h-full bg-gradient-to-r from-[#8B5CF6] to-[#7C3AED] animate-loading-bar rounded-full" style={{width: '60%'}} />
