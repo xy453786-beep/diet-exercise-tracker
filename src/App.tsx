@@ -308,10 +308,10 @@ export default function App() {
   };
 
   // ---- AI Handlers ----
-  const handleScanComplete = (imageDataUrl: string, presetIndex?: number) => {
+  const handleScanComplete = (imageDataUrl: string) => {
     setIsScannerOpen(false);
     setCapturedFoodImage(imageDataUrl);
-    setActiveScanPresetIndex(presetIndex ?? 0);
+    setActiveScanPresetIndex(0);
     setEditingScanResult(true);
   };
 
