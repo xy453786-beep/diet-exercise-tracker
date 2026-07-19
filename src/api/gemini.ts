@@ -1,5 +1,3 @@
-import { GoogleGenAI } from '@google/genai';
-
 export interface GeminiIngredient {
   name: string;
   weight: number;       // grams
@@ -44,7 +42,8 @@ const SYSTEM_PROMPT = `你是一个专业的营养师和食物分析专家。根
 - 保持数值合理：一餐总热量通常在300-1200千卡之间`;
 
 /**
- * Analyze a food image using Gemini Vision.
+ * Analyze a food image using Gemini Vision REST API (no SDK).
+ * Uses direct fetch to avoid SDK compatibility issues with AQ. API keys.
  * @param imageDataUrl - base64 data URL from canvas capture (data:image/jpeg;base64,...)
  * @param apiKey - Gemini API key
  */
@@ -52,32 +51,47 @@ export async function analyzeFoodImage(
   imageDataUrl: string,
   apiKey: string
 ): Promise<GeminiFoodAnalysis> {
-  const ai = new GoogleGenAI({ apiKey });
-
   // Extract base64 data (remove "data:image/jpeg;base64," prefix)
   const base64Data = imageDataUrl.replace(/^data:image\/\w+;base64,/, '');
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: [{
-      parts: [
-        { text: SYSTEM_PROMPT },
-        {
-          inlineData: {
-            mimeType: 'image/jpeg',
-            data: base64Data,
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{
+        parts: [
+          { text: SYSTEM_PROMPT },
+          {
+            inlineData: {
+              mimeType: 'image/jpeg',
+              data: base64Data,
+            },
           },
-        },
-      ],
-    }],
-    config: {
-      temperature: 0.2,
-      topP: 0.8,
-      maxOutputTokens: 2048,
-    },
+        ],
+      }],
+      generationConfig: {
+        temperature: 0.2,
+        topP: 0.8,
+        maxOutputTokens: 2048,
+      },
+    }),
   });
 
-  const text = response.text;
+  if (!response.ok) {
+    const errorBody = await response.text();
+    let errorMessage = `API 请求失败 (${response.status})`;
+    try {
+      const errorJson = JSON.parse(errorBody);
+      errorMessage = errorJson?.error?.message || errorMessage;
+    } catch {}
+    throw new Error(errorMessage);
+  }
+
+  const data = await response.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
   if (!text) {
     throw new Error('Gemini 未返回有效响应');
   }
@@ -114,6 +128,5 @@ export async function analyzeFoodImage(
  * Get Gemini API key from environment.
  */
 export function getGeminiApiKey(): string | null {
-  // Try Vite env var first, then check for a global injected var
   return import.meta.env.VITE_GEMINI_API_KEY || null;
 }
