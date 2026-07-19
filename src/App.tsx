@@ -556,6 +556,7 @@ export default function App() {
               capturedImage={capturedFoodImage}
               geminiAnalysis={geminiAnalysis}
               geminiLoading={geminiLoading}
+              geminiError={geminiError}
               onClose={() => {
                 setEditingScanResult(false);
                 setActiveScanPresetIndex(null);

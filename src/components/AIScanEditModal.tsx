@@ -20,6 +20,7 @@ interface AIScanEditModalProps {
   capturedImage?: string | null;
   geminiAnalysis?: GeminiFoodAnalysis | null;
   geminiLoading?: boolean;
+  geminiError?: string | null;
   onClose: () => void;
   onConfirm: (finalAnalysis: AIDietAnalysis) => void;
 }
@@ -31,6 +32,7 @@ export default function AIScanEditModal({
   capturedImage,
   geminiAnalysis,
   geminiLoading,
+  geminiError,
   onClose,
   onConfirm,
 }: AIScanEditModalProps) {
@@ -275,6 +277,17 @@ export default function AIScanEditModal({
 
         {/* Scrollable Content */}
         <div className="p-5 overflow-y-auto space-y-4 flex-1">
+          {/* Gemini Error Banner */}
+          {geminiError && (
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 flex items-start gap-2">
+              <span className="text-amber-500 text-sm flex-shrink-0">⚠️</span>
+              <div>
+                <p className="text-xs font-bold text-amber-700">AI 分析失败，使用默认数据</p>
+                <p className="text-[11px] text-amber-600 mt-0.5">{geminiError}</p>
+              </div>
+            </div>
+          )}
+
           {/* Meal Name Input */}
           <div className="space-y-1.5">
             <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
