@@ -1,18 +1,47 @@
-import { api } from './client';
-import type { User, MealRecord, MealItem, MealCategory, WorkoutItem, WeightEntry, AIDietAnalysis } from '../types';
+import { supabase } from './client';
+import type { MealRecord, MealItem, MealCategory, WorkoutItem, WeightEntry, AIDietAnalysis } from '../types';
+
+// Helper: get current user ID from Supabase auth
+async function getUserId(): Promise<string> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('未登录');
+  return user.id;
+}
+
+const MEAL_META: Record<string, { name: string; icon: string }> = {
+  breakfast: { name: '早餐', icon: '🌅' },
+  lunch: { name: '午餐', icon: '☀️' },
+  dinner: { name: '晚餐', icon: '🌙' },
+};
 
 // ==================== Auth / Profile ====================
 
-export async function getProfile(): Promise<User & { id: string }> {
-  const { user } = await api.get<{
-    user: { id: string; username: string; avatarUrl: string; height: number; weight: number | null };
-  }>('/auth/me');
+export async function getProfile(): Promise<{ id: string; username: string; avatarUrl: string; height: number; weight: number | null }> {
+  const userId = await getUserId();
+
+  const { data: profile, error } = await supabase
+    .from('profiles')
+    .select('id, username, avatar_url, height')
+    .eq('id', userId)
+    .single();
+
+  if (error || !profile) throw new Error('用户信息未找到');
+
+  // Get latest weight
+  const { data: latestWeight } = await supabase
+    .from('weight_entries')
+    .select('weight')
+    .eq('user_id', userId)
+    .order('entry_date', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   return {
-    id: user.id,
-    username: user.username,
-    avatarUrl: user.avatarUrl,
-    height: user.height || 178,
-    weight: user.weight || 72.5,
+    id: profile.id,
+    username: profile.username,
+    avatarUrl: profile.avatar_url,
+    height: profile.height || 178,
+    weight: latestWeight?.weight || null,
   };
 }
 
@@ -21,40 +50,129 @@ export async function updateProfile(data: {
   avatarUrl?: string;
   height?: number;
 }): Promise<void> {
-  await api.put('/profile', data);
+  const userId = await getUserId();
+  const updates: Record<string, any> = { updated_at: new Date().toISOString() };
+  if (data.username !== undefined) updates.username = data.username;
+  if (data.avatarUrl !== undefined) updates.avatar_url = data.avatarUrl;
+  if (data.height !== undefined) updates.height = data.height;
+
+  const { error } = await supabase
+    .from('profiles')
+    .update(updates)
+    .eq('id', userId);
+
+  if (error) throw new Error('更新失败');
 }
 
 // ==================== Weights ====================
 
-export async function getWeights(
-  from: string,
-  to: string
-): Promise<WeightEntry[]> {
-  const { entries } = await api.get<{
-    entries: { id: string; entryDate: string; weight: number }[];
-  }>(`/weights?from=${from}&to=${to}`);
+export async function getWeights(from: string, to: string): Promise<WeightEntry[]> {
+  const userId = await getUserId();
+  const { data, error } = await supabase
+    .from('weight_entries')
+    .select('entry_date, weight')
+    .eq('user_id', userId)
+    .gte('entry_date', from)
+    .lte('entry_date', to)
+    .order('entry_date', { ascending: true });
 
-  return entries.map((e) => ({
-    day: e.entryDate,
-    weight: e.weight,
-  }));
+  if (error) throw new Error('查询体重失败');
+  return (data || []).map((e) => ({ day: e.entry_date, weight: e.weight }));
 }
 
 export async function upsertWeight(date: string, weight: number): Promise<void> {
-  await api.post('/weights', { date, weight });
+  const userId = await getUserId();
+  const { error } = await supabase
+    .from('weight_entries')
+    .upsert({ user_id: userId, entry_date: date, weight }, { onConflict: 'user_id,entry_date' });
+
+  if (error) throw new Error('保存体重失败');
 }
 
 // ==================== Meals ====================
 
-export async function getMeals(
-  from: string,
-  to: string
-): Promise<Record<string, MealRecord[]>> {
-  const { mealsByDay } = await api.get<{
-    mealsByDay: Record<string, MealRecord[]>;
-  }>(`/meals?from=${from}&to=${to}`);
+export async function getMeals(from: string, to: string): Promise<Record<string, MealRecord[]>> {
+  const userId = await getUserId();
 
-  return mealsByDay || {};
+  // Fetch meal records
+  const { data: records, error } = await supabase
+    .from('meal_records')
+    .select('id, entry_date, category, name, icon')
+    .eq('user_id', userId)
+    .gte('entry_date', from)
+    .lte('entry_date', to)
+    .order('entry_date', { ascending: true })
+    .order('category', { ascending: true });
+
+  if (error) throw new Error('查询饮食记录失败');
+  if (!records || records.length === 0) return {};
+
+  // Fetch all items for these meal records
+  const recordIds = records.map((r) => r.id);
+  const { data: allItems, error: itemsError } = await supabase
+    .from('meal_items')
+    .select('id, meal_record_id, name, calories, protein, carbs, fat, portion, image')
+    .in('meal_record_id', recordIds)
+    .order('created_at', { ascending: true });
+
+  if (itemsError) throw new Error('查询食物条目失败');
+
+  // Group items by meal_record_id
+  const itemsByRecord: Record<string, any[]> = {};
+  for (const item of allItems || []) {
+    if (!itemsByRecord[item.meal_record_id]) {
+      itemsByRecord[item.meal_record_id] = [];
+    }
+    itemsByRecord[item.meal_record_id].push({
+      id: item.id,
+      name: item.name,
+      calories: item.calories,
+      protein: item.protein,
+      carbs: item.carbs,
+      fat: item.fat,
+      portion: item.portion,
+      image: item.image,
+    });
+  }
+
+  // Build mealsByDay
+  const mealsByDay: Record<string, MealRecord[]> = {};
+  for (const record of records) {
+    if (!mealsByDay[record.entry_date]) mealsByDay[record.entry_date] = [];
+    mealsByDay[record.entry_date].push({
+      id: record.id,
+      category: record.category as MealCategory,
+      name: record.name,
+      icon: record.icon,
+      items: itemsByRecord[record.id] || [],
+    });
+  }
+
+  return mealsByDay;
+}
+
+async function ensureMealRecord(userId: string, date: string, category: string): Promise<string> {
+  // Check existing
+  const { data: existing } = await supabase
+    .from('meal_records')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('entry_date', date)
+    .eq('category', category)
+    .maybeSingle();
+
+  if (existing) return existing.id;
+
+  // Create new
+  const meta = MEAL_META[category] || { name: category, icon: '🍽️' };
+  const { data: created, error } = await supabase
+    .from('meal_records')
+    .insert({ user_id: userId, entry_date: date, category, name: meta.name, icon: meta.icon })
+    .select('id')
+    .single();
+
+  if (error || !created) throw new Error('创建饮食记录失败');
+  return created.id;
 }
 
 export async function addMealItem(
@@ -62,78 +180,210 @@ export async function addMealItem(
   category: MealCategory,
   item: Omit<MealItem, 'id'>
 ): Promise<MealItem> {
-  const { item: created } = await api.post<{ item: MealItem }>('/meals/items', {
-    date,
-    category,
-    item,
-  });
+  const userId = await getUserId();
+
+  if (!MEAL_META[category]) throw new Error(`无效的餐次类别: ${category}`);
+
+  const mealRecordId = await ensureMealRecord(userId, date, category);
+
+  const { data: created, error } = await supabase
+    .from('meal_items')
+    .insert({
+      meal_record_id: mealRecordId,
+      name: item.name,
+      calories: item.calories,
+      protein: item.protein || 0,
+      carbs: item.carbs || 0,
+      fat: item.fat || 0,
+      portion: item.portion || '1份',
+      image: item.image || null,
+    })
+    .select('id, name, calories, protein, carbs, fat, portion, image')
+    .single();
+
+  if (error || !created) throw new Error('添加食物失败');
   return created;
 }
 
 export async function deleteMealItem(itemId: string): Promise<void> {
-  await api.delete(`/meals/items/${itemId}`);
+  const userId = await getUserId();
+
+  // Verify ownership via meal_record chain
+  const { data: item } = await supabase
+    .from('meal_items')
+    .select('meal_record_id')
+    .eq('id', itemId)
+    .single();
+
+  if (!item) throw new Error('食物条目未找到');
+
+  const { data: record } = await supabase
+    .from('meal_records')
+    .select('user_id')
+    .eq('id', item.meal_record_id)
+    .single();
+
+  if (!record || record.user_id !== userId) throw new Error('无权删除');
+
+  const { error } = await supabase.from('meal_items').delete().eq('id', itemId);
+  if (error) throw new Error('删除失败');
 }
 
 // ==================== Workouts ====================
 
-export async function getWorkouts(
-  from: string,
-  to: string
-): Promise<Record<string, WorkoutItem[]>> {
-  const { workoutsByDay } = await api.get<{
-    workoutsByDay: Record<string, WorkoutItem[]>;
-  }>(`/workouts?from=${from}&to=${to}`);
+export async function getWorkouts(from: string, to: string): Promise<Record<string, WorkoutItem[]>> {
+  const userId = await getUserId();
 
-  return workoutsByDay || {};
+  const { data: entries, error } = await supabase
+    .from('workout_entries')
+    .select('*')
+    .eq('user_id', userId)
+    .gte('entry_date', from)
+    .lte('entry_date', to)
+    .order('created_at', { ascending: false });
+
+  if (error) throw new Error('查询运动记录失败');
+
+  const workoutsByDay: Record<string, WorkoutItem[]> = {};
+  for (const w of entries || []) {
+    if (!workoutsByDay[w.entry_date]) workoutsByDay[w.entry_date] = [];
+    workoutsByDay[w.entry_date].push({
+      id: w.id,
+      type: w.type,
+      duration: w.duration,
+      calories: w.calories,
+      intensity: w.intensity,
+      category: w.category,
+      time: w.time_of_day,
+      distance: w.distance,
+    });
+  }
+
+  return workoutsByDay;
 }
 
-export async function addWorkout(
-  date: string,
-  workout: Omit<WorkoutItem, 'id'>
-): Promise<WorkoutItem> {
-  const { workout: created } = await api.post<{ workout: WorkoutItem }>('/workouts', {
-    date,
-    ...workout,
-  });
-  return created;
+export async function addWorkout(date: string, workout: Omit<WorkoutItem, 'id'>): Promise<WorkoutItem> {
+  const userId = await getUserId();
+
+  const { data: entry, error } = await supabase
+    .from('workout_entries')
+    .insert({
+      user_id: userId,
+      entry_date: date,
+      type: workout.type,
+      duration: workout.duration,
+      calories: workout.calories,
+      intensity: workout.intensity,
+      category: workout.category,
+      time_of_day: workout.time || null,
+      distance: workout.distance || null,
+    })
+    .select('*')
+    .single();
+
+  if (error || !entry) throw new Error('添加运动失败');
+
+  return {
+    id: entry.id,
+    type: entry.type,
+    duration: entry.duration,
+    calories: entry.calories,
+    intensity: entry.intensity,
+    category: entry.category,
+    time: entry.time_of_day,
+    distance: entry.distance,
+  };
 }
 
 export async function deleteWorkout(id: string): Promise<void> {
-  await api.delete(`/workouts/${id}`);
+  const userId = await getUserId();
+
+  // Verify ownership
+  const { data: existing } = await supabase
+    .from('workout_entries')
+    .select('user_id')
+    .eq('id', id)
+    .single();
+
+  if (!existing) throw new Error('运动记录未找到');
+  if (existing.user_id !== userId) throw new Error('无权删除');
+
+  const { error } = await supabase.from('workout_entries').delete().eq('id', id);
+  if (error) throw new Error('删除失败');
 }
 
 // ==================== Water ====================
 
-export async function getWater(
-  from: string,
-  to: string
-): Promise<Record<string, number>> {
-  const { intakes } = await api.get<{ intakes: Record<string, number> }>(
-    `/water?from=${from}&to=${to}`
-  );
-  return intakes || {};
+export async function getWater(from: string, to: string): Promise<Record<string, number>> {
+  const userId = await getUserId();
+
+  const { data, error } = await supabase
+    .from('water_intakes')
+    .select('entry_date, amount_ml')
+    .eq('user_id', userId)
+    .gte('entry_date', from)
+    .lte('entry_date', to);
+
+  if (error) throw new Error('查询饮水记录失败');
+
+  const intakes: Record<string, number> = {};
+  for (const e of data || []) {
+    intakes[e.entry_date] = e.amount_ml;
+  }
+  return intakes;
 }
 
-export async function setWater(
-  date: string,
-  amount: number,
-  mode: 'set' | 'add' = 'set'
-): Promise<void> {
-  await api.put(`/water?mode=${mode}`, { date, amount });
+export async function setWater(date: string, amount: number, mode: 'set' | 'add' = 'set'): Promise<void> {
+  const userId = await getUserId();
+
+  if (mode === 'add') {
+    const { data: existing } = await supabase
+      .from('water_intakes')
+      .select('amount_ml')
+      .eq('user_id', userId)
+      .eq('entry_date', date)
+      .maybeSingle();
+
+    const current = existing?.amount_ml || 0;
+    const newAmount = Math.min(4000, current + amount);
+
+    const { error } = await supabase
+      .from('water_intakes')
+      .upsert({ user_id: userId, entry_date: date, amount_ml: newAmount }, { onConflict: 'user_id,entry_date' });
+
+    if (error) throw new Error('更新饮水失败');
+  } else {
+    const { error } = await supabase
+      .from('water_intakes')
+      .upsert({ user_id: userId, entry_date: date, amount_ml: Math.max(0, amount) }, { onConflict: 'user_id,entry_date' });
+
+    if (error) throw new Error('更新饮水失败');
+  }
 }
 
 // ==================== AI Analyses ====================
 
-export async function saveAnalysis(
-  analysis: AIDietAnalysis
-): Promise<{ id: string }> {
-  const { analysis: saved } = await api.post<{ analysis: { id: string } }>('/analyses', analysis);
-  return saved;
+export async function saveAnalysis(analysis: AIDietAnalysis): Promise<{ id: string }> {
+  const userId = await getUserId();
+  const { data, error } = await supabase
+    .from('ai_analyses')
+    .insert({ user_id: userId, analysis_data: analysis })
+    .select('id')
+    .single();
+
+  if (error || !data) throw new Error('保存分析失败');
+  return { id: data.id };
 }
 
 export async function getRecentAnalyses(limit = 10): Promise<AIDietAnalysis[]> {
-  const { analyses } = await api.get<{ analyses: AIDietAnalysis[] }>(
-    `/analyses?limit=${limit}`
-  );
-  return analyses;
+  const userId = await getUserId();
+  const { data, error } = await supabase
+    .from('ai_analyses')
+    .select('analysis_data')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error('查询分析记录失败');
+  return (data || []).map((r) => r.analysis_data);
 }
