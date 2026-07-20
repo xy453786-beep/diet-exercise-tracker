@@ -123,12 +123,26 @@ export async function getMeals(from: string, to: string): Promise<Record<string,
   if (error) throw new Error('查询饮食记录失败');
   if (!records || records.length === 0) return {};
 
-  // Fetch all items for these meal records
-  const recordIds = records.map((r) => r.id);
+  // Deduplicate: keep only one record per date+category (latest ID wins)
+  const seen = new Map<string, string>(); // key: "date:category" → id
+  const deduped: typeof records = [];
+  for (const r of records) {
+    const key = `${r.entry_date}:${r.category}`;
+    if (seen.has(key)) {
+      // Merge: update the existing entry's ID, items will be fetched for both
+      const prev = deduped.find(d => d.id === seen.get(key));
+      if (prev) continue; // skip duplicate, keep first
+    }
+    seen.set(key, r.id);
+    deduped.push(r);
+  }
+
+  // Fetch all items for these meal records (include all IDs so no items are lost)
+  const allRecordIds = records.map((r) => r.id);
   const { data: allItems, error: itemsError } = await supabase
     .from('meal_items')
     .select('id, meal_record_id, name, calories, protein, carbs, fat, portion, image')
-    .in('meal_record_id', recordIds)
+    .in('meal_record_id', allRecordIds)
     .order('created_at', { ascending: true });
 
   if (itemsError) throw new Error('查询食物条目失败');
@@ -151,9 +165,9 @@ export async function getMeals(from: string, to: string): Promise<Record<string,
     });
   }
 
-  // Build mealsByDay
+  // Build mealsByDay using deduped records
   const mealsByDay: Record<string, MealRecord[]> = {};
-  for (const record of records) {
+  for (const record of deduped) {
     if (!mealsByDay[record.entry_date]) mealsByDay[record.entry_date] = [];
     mealsByDay[record.entry_date].push({
       id: record.id,

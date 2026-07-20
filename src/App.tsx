@@ -352,9 +352,11 @@ export default function App() {
   };
 
   const handleSaveAIMeal = async (category: MealCategory, item: any) => {
-    await handleAddFoodItem(category, item);
+    // Navigate immediately so user sees diet page right away
     setActiveAddFoodCategory(null);
     setCurrentPage('diet');
+    // Save in background
+    await handleAddFoodItem(category, item);
   };
 
   // ---- Header Title ----
@@ -551,7 +553,7 @@ export default function App() {
             />
 
             <AIScanEditModal
-              isOpen={editingScanResult && activeScanPresetIndex !== null}
+              isOpen={geminiLoading || (editingScanResult && activeScanPresetIndex !== null)}
               presetIndex={activeScanPresetIndex ?? 0}
               category={activeAddFoodCategory || 'lunch'}
               capturedImage={capturedFoodImage}
