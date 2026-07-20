@@ -41,13 +41,48 @@ const SYSTEM_PROMPT = `你是一个专业的营养师和食物分析专家。根
 - 如果看不清，根据常见做法合理推测
 - 保持数值合理：一餐总热量通常在300-1200千卡之间`;
 
+import { supabase } from './client';
+
+/**
+ * Upload a base64 image to Supabase Storage and return the public URL.
+ */
+async function uploadImageToStorage(imageDataUrl: string): Promise<string> {
+  const base64Data = imageDataUrl.replace(/^data:image\/\w+;base64,/, '');
+  const binaryStr = atob(base64Data);
+  const bytes = new Uint8Array(binaryStr.length);
+  for (let i = 0; i < binaryStr.length; i++) {
+    bytes[i] = binaryStr.charCodeAt(i);
+  }
+
+  const fileName = `food-${Date.now()}.jpg`;
+  const { data, error } = await supabase.storage
+    .from('food-photos')
+    .upload(fileName, bytes, {
+      contentType: 'image/jpeg',
+      upsert: false,
+    });
+
+  if (error) throw new Error(`图片上传失败: ${error.message}`);
+
+  const { data: urlData } = supabase.storage
+    .from('food-photos')
+    .getPublicUrl(data.path);
+
+  return urlData.publicUrl;
+}
+
 /**
  * Analyze a food image using Zhipu GLM-4V (智谱视觉模型).
+ * Accepts an image URL (GLM-4V-Flash free tier only supports URLs, not base64).
  */
 export async function analyzeFoodImage(
   imageDataUrl: string,
   apiKey: string
 ): Promise<ZhipuFoodAnalysis> {
+  // Step 1: Upload to Supabase Storage to get a public URL
+  const imageUrl = await uploadImageToStorage(imageDataUrl);
+
+  // Step 2: Call Zhipu API with URL
   const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
     method: 'POST',
     headers: {
@@ -60,8 +95,8 @@ export async function analyzeFoodImage(
         {
           role: 'user',
           content: [
+            { type: 'image_url', image_url: { url: imageUrl } },
             { type: 'text', text: SYSTEM_PROMPT },
-            { type: 'image_url', image_url: { url: imageDataUrl } },
           ],
         },
       ],
