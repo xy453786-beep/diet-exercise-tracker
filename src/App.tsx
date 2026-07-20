@@ -67,7 +67,6 @@ export default function App() {
   const [geminiAnalysis, setGeminiAnalysis] = useState<ZhipuFoodAnalysis | null>(null);
   const [geminiError, setGeminiError] = useState<string | null>(null);
   const [editingScanResult, setEditingScanResult] = useState<boolean>(false);
-  const [generatingReport, setGeneratingReport] = useState(false);
   const [currentAIAnalysisData, setCurrentAIAnalysisData] = useState<AIDietAnalysis>(MOCK_AI_DIET_ANALYSIS);
 
   // ---- Date Range ----
@@ -345,12 +344,8 @@ export default function App() {
     }
   };
 
-  const handleConfirmScanEdit = async (finalAnalysis: AIDietAnalysis) => {
+  const handleConfirmScanEdit = (finalAnalysis: AIDietAnalysis) => {
     setCurrentAIAnalysisData(finalAnalysis);
-    setGeneratingReport(true);
-    // Brief pause so user sees "generating" before transition
-    await new Promise(r => setTimeout(r, 600));
-    setGeneratingReport(false);
     setEditingScanResult(false);
     setActiveScanPresetIndex(null);
     setCurrentPage('ai-result');
@@ -563,7 +558,6 @@ export default function App() {
               geminiAnalysis={geminiAnalysis}
               geminiLoading={geminiLoading}
               geminiError={geminiError}
-              generatingReport={generatingReport}
               onClose={() => {
                 setEditingScanResult(false);
                 setActiveScanPresetIndex(null);

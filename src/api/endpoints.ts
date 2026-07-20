@@ -1,11 +1,27 @@
 import { supabase } from './client';
 import type { MealRecord, MealItem, MealCategory, WorkoutItem, WeightEntry, AIDietAnalysis } from '../types';
 
-// Helper: get current user ID from Supabase auth
+// Cached user ID — use getSession() (local, no network) to avoid API call per operation
+let _cachedUserId: string | null = null;
+
 async function getUserId(): Promise<string> {
+  if (_cachedUserId) return _cachedUserId;
+  // getSession reads from local storage, no network request
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session?.user?.id) {
+    _cachedUserId = session.user.id;
+    return _cachedUserId;
+  }
+  // Fallback: verify with server
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('未登录');
-  return user.id;
+  _cachedUserId = user.id;
+  return _cachedUserId;
+}
+
+// Clear cache on logout (called from AuthContext)
+export function clearUserIdCache(): void {
+  _cachedUserId = null;
 }
 
 const MEAL_META: Record<string, { name: string; icon: string }> = {

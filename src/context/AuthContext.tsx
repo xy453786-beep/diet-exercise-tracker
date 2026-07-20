@@ -3,6 +3,7 @@ import { supabase } from '../api/client';
 import type { User as AppUser } from '../types';
 import type { Session } from '@supabase/supabase-js';
 import * as profileApi from '../api/endpoints';
+import { clearUserIdCache } from '../api/endpoints';
 
 interface AuthState {
   appUser: (AppUser & { id: string }) | null;
@@ -102,6 +103,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
+    clearUserIdCache();
     setState({ appUser: null, session: null, loading: false });
   }, []);
 
