@@ -21,6 +21,7 @@ interface AIScanEditModalProps {
   geminiAnalysis?: ZhipuFoodAnalysis | null;
   geminiLoading?: boolean;
   geminiError?: string | null;
+  generatingReport?: boolean;
   onClose: () => void;
   onConfirm: (finalAnalysis: AIDietAnalysis) => void;
 }
@@ -33,6 +34,7 @@ export default function AIScanEditModal({
   geminiAnalysis,
   geminiLoading,
   geminiError,
+  generatingReport,
   onClose,
   onConfirm,
 }: AIScanEditModalProps) {
@@ -151,6 +153,27 @@ export default function AIScanEditModal({
           </div>
         </div>
         <style>{`@keyframes loadingBar { 0% { width: 0%; } 50% { width: 70%; } 100% { width: 95%; } } .animate-loading-bar { animation: loadingBar 2.5s ease-in-out infinite; }`}</style>
+      </div>
+    );
+  }
+
+  // Generating report state
+  if (generatingReport) {
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl w-full max-w-[380px] p-8 shadow-2xl flex flex-col items-center gap-4">
+          <div className="w-12 h-12 rounded-full bg-[#10B981]/10 flex items-center justify-center">
+            <Sparkles size={28} className="text-[#10B981] animate-pulse" />
+          </div>
+          <div className="text-center">
+            <h3 className="text-base font-bold text-gray-900">正在生成分析报告...</h3>
+            <p className="text-xs text-gray-500 mt-1">根据识别结果计算营养成分与运动建议</p>
+          </div>
+          <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-[#10B981] to-[#059669] animate-loading-bar rounded-full" style={{width: '60%'}} />
+          </div>
+        </div>
+        <style>{`@keyframes loadingBar { 0% { width: 0%; } 50% { width: 70%; } 100% { width: 95%; } } .animate-loading-bar { animation: loadingBar 1s ease-in-out infinite; }`}</style>
       </div>
     );
   }

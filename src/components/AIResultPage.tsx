@@ -64,31 +64,6 @@ export default function AIResultPage({ analysisData, defaultCategory = 'lunch', 
           AI 智能扫描
         </div>
 
-        {/* Dynamic Scan Hotspot Markers */}
-        <div className="absolute top-[22%] left-[45%] group">
-          <div className="w-3.5 h-3.5 bg-[#8B5CF6] border-2 border-white rounded-full animate-ping absolute" />
-          <div className="w-3.5 h-3.5 bg-[#8B5CF6] border-2 border-white rounded-full relative z-10" />
-          <div className="absolute left-5 -top-1 bg-black/75 backdrop-blur-sm text-white text-[9px] font-semibold px-2 py-0.5 rounded-md whitespace-nowrap opacity-100 group-hover:opacity-100 transition-all shadow-md">
-            香煎三文鱼 150g (P:32g)
-          </div>
-        </div>
-
-        <div className="absolute top-[55%] left-[28%] group">
-          <div className="w-3.5 h-3.5 bg-[#8B5CF6] border-2 border-white rounded-full animate-ping absolute" />
-          <div className="w-3.5 h-3.5 bg-[#8B5CF6] border-2 border-white rounded-full relative z-10" />
-          <div className="absolute left-5 -top-1 bg-black/75 backdrop-blur-sm text-white text-[9px] font-semibold px-2 py-0.5 rounded-md whitespace-nowrap opacity-100 group-hover:opacity-100 transition-all shadow-md">
-            新鲜牛油果 50g (F:11g)
-          </div>
-        </div>
-
-        <div className="absolute top-[70%] left-[58%] group">
-          <div className="w-3.5 h-3.5 bg-[#8B5CF6] border-2 border-white rounded-full animate-ping absolute" />
-          <div className="w-3.5 h-3.5 bg-[#8B5CF6] border-2 border-white rounded-full relative z-10" />
-          <div className="absolute left-5 -top-1 bg-black/75 backdrop-blur-sm text-white text-[9px] font-semibold px-2 py-0.5 rounded-md whitespace-nowrap opacity-100 group-hover:opacity-100 transition-all shadow-md">
-            三色藜麦饭 100g (C:45g)
-          </div>
-        </div>
-
         {/* Title overlay */}
         <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent p-4">
           <h2 className="text-white text-[20px] font-extrabold leading-tight">{analysisData.name}</h2>
