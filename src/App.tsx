@@ -535,7 +535,7 @@ export default function App() {
             />
 
             <AddFoodModal
-              isOpen={activeAddFoodCategory !== null && !isScannerOpen && currentPage === 'diet'}
+              isOpen={activeAddFoodCategory !== null && !isScannerOpen && !geminiLoading && !editingScanResult && currentPage === 'diet'}
               category={activeAddFoodCategory}
               onClose={() => setActiveAddFoodCategory(null)}
               onAdd={handleAddFoodItem}
