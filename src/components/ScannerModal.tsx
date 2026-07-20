@@ -74,8 +74,8 @@ export default function ScannerModal({ isOpen, onClose, onCapture }: ScannerModa
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
-    // Resize to max 512px for AI API compatibility
-    const MAX_SIZE = 512;
+    // Resize to max 1024px for AI API compatibility
+    const MAX_SIZE = 1024;
     let w = video.videoWidth;
     let h = video.videoHeight;
     if (w > h && w > MAX_SIZE) { h = Math.round(h * MAX_SIZE / w); w = MAX_SIZE; }
@@ -86,7 +86,7 @@ export default function ScannerModal({ isOpen, onClose, onCapture }: ScannerModa
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.drawImage(video, 0, 0, w, h);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
     setCapturedImage(dataUrl);
     stopCamera();
     setScanMode('scanning');
