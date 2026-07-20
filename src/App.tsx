@@ -91,11 +91,21 @@ export default function App() {
       const mealsWithLabels = mapDateKeysToLabels(mealsData);
       const workoutsWithLabels = mapDateKeysToLabels(wourkoutsData);
 
-      // Merge with defaults: keep initial data for days not in API
+      // Merge with defaults: ensure every day has breakfast/lunch/dinner
       const mergedMeals: Record<string, MealRecord[]> = { ...INITIAL_MEALS_BY_DAY };
       for (const [label, records] of Object.entries(mealsWithLabels)) {
         if (records && records.length > 0) {
-          mergedMeals[label] = records;
+          const categories = new Set(records.map(r => r.category));
+          const existing = mergedMeals[label] || [];
+          // Keep API records, fill missing categories from defaults
+          const defaults = INITIAL_MEALS_BY_DAY[label] || [];
+          const merged: MealRecord[] = [...records];
+          for (const d of defaults) {
+            if (!categories.has(d.category)) {
+              merged.push(d);
+            }
+          }
+          mergedMeals[label] = merged;
         }
       }
 

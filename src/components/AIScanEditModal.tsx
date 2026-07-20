@@ -6,7 +6,8 @@ import type { ZhipuFoodAnalysis } from '../api/zhipu';
 interface EditableIngredient {
   id: string;
   name: string;
-  weight: number; // grams
+  weight: number;
+  unit: 'g' | 'ml';
   caloriesPerGram: number;
   proteinPerGram: number;
   carbsPerGram: number;
@@ -39,6 +40,26 @@ export default function AIScanEditModal({
   const [mealName, setMealName] = useState('');
   const [ingredients, setIngredients] = useState<EditableIngredient[]>([]);
 
+  // Guess unit from ingredient name
+  const guessUnit = (name: string): 'g' | 'ml' => {
+    const liquids = ['咖啡', '牛奶', '奶茶', '果汁', '豆浆', '酸奶', '汤', '汁', '酱', '饮', '水', '茶', '酒', '奶', '油', '醋', '露', '液'];
+    return liquids.some(kw => name.includes(kw)) ? 'ml' : 'g';
+  };
+
+  const makeIngredient = (name: string, weight: number, calories: number, protein: number, carbs: number, fat: number): EditableIngredient => {
+    const w = weight > 0 ? weight : 1;
+    return {
+      id: `ing-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name,
+      weight: w,
+      unit: guessUnit(name),
+      caloriesPerGram: calories / w,
+      proteinPerGram: protein / w,
+      carbsPerGram: carbs / w,
+      fatPerGram: fat / w,
+    };
+  };
+
   // Initialize data based on presetIndex or Gemini analysis
   useEffect(() => {
     if (!isOpen) return;
@@ -46,88 +67,26 @@ export default function AIScanEditModal({
     // Gemini AI analysis data
     if (presetIndex === -1 && geminiAnalysis) {
       setMealName(geminiAnalysis.mealName);
-      setIngredients(geminiAnalysis.ingredients.map((ing, i) => ({
-        id: `gemini-${i}-${Date.now()}`,
-        name: ing.name,
-        weight: ing.weight,
-        caloriesPerGram: ing.weight > 0 ? ing.calories / ing.weight : 0,
-        proteinPerGram: ing.weight > 0 ? ing.protein / ing.weight : 0,
-        carbsPerGram: ing.weight > 0 ? ing.carbs / ing.weight : 0,
-        fatPerGram: ing.weight > 0 ? ing.fat / ing.weight : 0,
-      })));
+      setIngredients(geminiAnalysis.ingredients.map(ing =>
+        makeIngredient(ing.name, ing.weight, ing.calories, ing.protein, ing.carbs, ing.fat)
+      ));
       return;
     }
 
     if (presetIndex === 0) {
       setMealName('香煎三文鱼藜麦碗');
       setIngredients([
-        {
-          id: 'ing-1',
-          name: '烤三文鱼',
-          weight: 150,
-          caloriesPerGram: 2.08,
-          proteinPerGram: 0.20,
-          carbsPerGram: 0.00,
-          fatPerGram: 0.10,
-        },
-        {
-          id: 'ing-2',
-          name: '三色藜麦',
-          weight: 100,
-          caloriesPerGram: 1.20,
-          proteinPerGram: 0.04,
-          carbsPerGram: 0.24,
-          fatPerGram: 0.02,
-        },
-        {
-          id: 'ing-3',
-          name: '新鲜牛油果',
-          weight: 50,
-          caloriesPerGram: 1.60,
-          proteinPerGram: 0.02,
-          carbsPerGram: 0.08,
-          fatPerGram: 0.14,
-        },
-        {
-          id: 'ing-4',
-          name: '混合蔬菜与柠檬酱汁',
-          weight: 50,
-          caloriesPerGram: 0.60,
-          proteinPerGram: 0.02,
-          carbsPerGram: 0.10,
-          fatPerGram: 0.00,
-        },
+        makeIngredient('烤三文鱼', 150, 312, 30, 0, 15),
+        makeIngredient('三色藜麦', 100, 120, 4, 24, 2),
+        makeIngredient('新鲜牛油果', 50, 80, 1, 4, 7),
+        makeIngredient('混合蔬菜与柠檬酱汁', 50, 30, 1, 5, 0),
       ]);
     } else {
       setMealName('水煮鸡胸肉沙拉');
       setIngredients([
-        {
-          id: 'ing-1',
-          name: '水煮鸡胸肉',
-          weight: 120,
-          caloriesPerGram: 1.33,
-          proteinPerGram: 0.217,
-          carbsPerGram: 0.00,
-          fatPerGram: 0.025,
-        },
-        {
-          id: 'ing-2',
-          name: '圣女果与西蓝花',
-          weight: 100,
-          caloriesPerGram: 0.44,
-          proteinPerGram: 0.03,
-          carbsPerGram: 0.08,
-          fatPerGram: 0.005,
-        },
-        {
-          id: 'ing-3',
-          name: '低卡醋汁',
-          weight: 30,
-          caloriesPerGram: 4.33,
-          proteinPerGram: 0.10,
-          carbsPerGram: 0.233,
-          fatPerGram: 0.083,
-        },
+        makeIngredient('水煮鸡胸肉', 120, 160, 26, 0, 3),
+        makeIngredient('圣女果与西蓝花', 100, 44, 3, 8, 0.5),
+        makeIngredient('低卡醋汁', 30, 130, 3, 7, 2.5),
       ]);
     }
   }, [isOpen, presetIndex]);
@@ -175,12 +134,20 @@ export default function AIScanEditModal({
     setIngredients((prev) => prev.filter((ing) => ing.id !== id));
   };
 
+  // Toggle unit between g and ml
+  const handleUnitToggle = (id: string) => {
+    setIngredients((prev) =>
+      prev.map((ing) => (ing.id === id ? { ...ing, unit: ing.unit === 'g' ? 'ml' : 'g' } : ing))
+    );
+  };
+
   // Add Custom Ingredient
   const handleAddIngredient = () => {
     const newIng: EditableIngredient = {
       id: `ing-custom-${Date.now()}`,
       name: '自定义食材',
       weight: 100,
+      unit: 'g',
       caloriesPerGram: 1.2,
       proteinPerGram: 0.08,
       carbsPerGram: 0.15,
@@ -235,7 +202,7 @@ export default function AIScanEditModal({
       },
       ingredients: ingredients.map((ing) => ({
         name: ing.name,
-        portion: `${ing.weight}g`,
+        portion: `${ing.weight}${ing.unit}`,
         calories: Math.round(ing.weight * ing.caloriesPerGram),
       })),
       image:
@@ -353,7 +320,14 @@ export default function AIScanEditModal({
                           onChange={(e) => handleWeightChange(ing.id, parseInt(e.target.value) || 0)}
                           className="w-10 text-center text-xs font-extrabold text-gray-800 bg-transparent focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         />
-                        <span className="text-[10px] text-gray-400 font-bold ml-0.5">g</span>
+                        <button
+                          type="button"
+                          onClick={() => handleUnitToggle(ing.id)}
+                          className="text-[10px] font-bold ml-0.5 px-1 py-0.5 rounded bg-gray-200 hover:bg-purple-200 text-gray-500 hover:text-purple-600 transition-colors"
+                          title="点击切换克(g)/毫升(ml)"
+                        >
+                          {ing.unit}
+                        </button>
                       </div>
 
                       <button
