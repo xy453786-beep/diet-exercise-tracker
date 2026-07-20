@@ -261,12 +261,8 @@ export default function App() {
     }
   };
 
-  const handleRemoveFoodItem = async (category: MealCategory, itemId: string) => {
-    try {
-      await endpoints.deleteMealItem(itemId);
-    } catch (err) {
-      console.error('Failed to delete food item:', err);
-    }
+  const handleRemoveFoodItem = (category: MealCategory, itemId: string) => {
+    // Optimistic: remove from UI immediately, delete in background
     setMealsByDay((prev) => {
       const dayMeals = prev[selectedDay] || [];
       return {
@@ -277,6 +273,10 @@ export default function App() {
             : meal
         ),
       };
+    });
+    // Fire-and-forget: API runs in background
+    endpoints.deleteMealItem(itemId).catch((err) => {
+      console.error('Failed to delete food item:', err);
     });
   };
 

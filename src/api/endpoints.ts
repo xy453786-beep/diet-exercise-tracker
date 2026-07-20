@@ -236,25 +236,7 @@ export async function addMealItem(
 }
 
 export async function deleteMealItem(itemId: string): Promise<void> {
-  const userId = await getUserId();
-
-  // Verify ownership via meal_record chain
-  const { data: item } = await supabase
-    .from('meal_items')
-    .select('meal_record_id')
-    .eq('id', itemId)
-    .single();
-
-  if (!item) throw new Error('食物条目未找到');
-
-  const { data: record } = await supabase
-    .from('meal_records')
-    .select('user_id')
-    .eq('id', item.meal_record_id)
-    .single();
-
-  if (!record || record.user_id !== userId) throw new Error('无权删除');
-
+  // Delete directly — RLS policies on meal_items enforce ownership via meal_records join
   const { error } = await supabase.from('meal_items').delete().eq('id', itemId);
   if (error) throw new Error('删除失败');
 }
