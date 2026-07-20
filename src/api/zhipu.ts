@@ -94,11 +94,19 @@ export async function analyzeFoodImage(
   if (jsonStr.endsWith('```')) jsonStr = jsonStr.slice(0, -3);
   jsonStr = jsonStr.trim();
 
-  const analysis: ZhipuFoodAnalysis = JSON.parse(jsonStr);
-  if (!analysis.mealName || !analysis.ingredients?.length) {
-    throw new Error('智谱 AI 返回数据不完整');
+  try {
+    const analysis: ZhipuFoodAnalysis = JSON.parse(jsonStr);
+    if (!analysis.mealName || !analysis.ingredients?.length) {
+      throw new Error('智谱 AI 返回数据不完整');
+    }
+    return analysis;
+  } catch (e: any) {
+    if (e instanceof SyntaxError) {
+      console.error('智谱原始返回:', text);
+      throw new Error(`AI 返回格式异常：${text.slice(0, 80)}...`);
+    }
+    throw e;
   }
-  return analysis;
 }
 
 /** Get Zhipu API key from environment. */
