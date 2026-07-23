@@ -19,9 +19,16 @@ if (typeof globalThis.WebSocket === 'undefined') {
 const { createApp } = await import('./app.js');
 
 const PORT = process.env.PORT || 3001;
+const HOST = '0.0.0.0';
 
 const app = createApp();
-app.listen(PORT, () => {
-  console.log(`🚀 API 服务器已启动: http://localhost:${PORT}`);
-  console.log(`   健康检查: http://localhost:${PORT}/api/health`);
+
+// Root health check for cloud platforms (Koyeb, Render, etc.)
+app.get('/', (_req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.listen(Number(PORT), HOST, () => {
+  console.log(`🚀 API 服务器已启动: http://${HOST}:${PORT}`);
+  console.log(`   健康检查: http://${HOST}:${PORT}/api/health`);
 });

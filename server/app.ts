@@ -13,10 +13,20 @@ import { foodRouter } from './routes/food.js';
 export function createApp() {
   const app = express();
 
-  // CORS: allow local dev + Netlify production + deploy previews
+  // CORS: allow local dev + known production domains
+  const ALLOWED_SUFFIXES = [
+    '.github.io',           // GitHub Pages
+    '.netlify.app',         // Netlify
+    '.onrender.com',        // Render
+    '.koyeb.app',           // Koyeb
+    '.ngrok-free.dev',      // ngrok
+    '.ngrok-free.app',      // ngrok
+    '.tcloudbase.com',      // 腾讯云 CloudBase
+  ];
+
   app.use(cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (server-to-server, curl, mobile)
+      // Allow requests with no origin (server-to-server, curl, mobile, WebView)
       if (!origin) return callback(null, true);
       // Allow local dev
       if (
@@ -25,10 +35,13 @@ export function createApp() {
       ) {
         return callback(null, true);
       }
-      // Allow Netlify domains (production + deploy previews)
-      if (origin.endsWith('.netlify.app')) {
-        return callback(null, true);
+      // Allow known deployment platforms
+      for (const suffix of ALLOWED_SUFFIXES) {
+        if (origin.endsWith(suffix)) {
+          return callback(null, true);
+        }
       }
+      console.warn('[CORS] Blocked origin:', origin);
       callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
