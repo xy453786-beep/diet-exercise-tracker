@@ -230,14 +230,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const updateAppUser = useCallback(async (data: Partial<AppUser>) => {
+    // Optimistic update: 先改 UI，让用户不会卡住
+    setState((prev) => ({
+      ...prev,
+      appUser: prev.appUser ? { ...prev.appUser, ...data } : null,
+    }));
+    // 后台持久化，失败也不阻塞
     try {
       await profileApi.updateProfile(data);
-      setState((prev) => ({
-        ...prev,
-        appUser: prev.appUser ? { ...prev.appUser, ...data } : null,
-      }));
     } catch (err) {
-      console.error('Failed to update profile:', err);
+      console.error('Failed to update profile (UI already updated):', err);
     }
   }, []);
 
