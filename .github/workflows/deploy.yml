@@ -36,7 +36,7 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-          VITE_ZHIPU_API_KEY: ${{ secrets.VITE_ZHIPU_API_KEY }}
+          VITE_API_URL: ${{ vars.VITE_API_URL || 'https://diet-tracker-api-t0yp.onrender.com' }}
         run: npm run build
 
       - name: Create 404.html for SPA routing
