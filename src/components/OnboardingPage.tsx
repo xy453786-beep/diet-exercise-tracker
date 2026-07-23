@@ -40,7 +40,10 @@ export default function OnboardingPage() {
         hasCompletedSurvey: true,
       } as any);
       setDone(true);
-      // AuthContext will pick up the change on next render
+      // 强制刷新确保跳转
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
     } catch (err) {
       console.error('Failed to save survey:', err);
     } finally {
