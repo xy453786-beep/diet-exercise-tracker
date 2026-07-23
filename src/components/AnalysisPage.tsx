@@ -11,12 +11,15 @@ import {
   CartesianGrid,
 } from 'recharts';
 import { WeightEntry, MealRecord, WorkoutItem } from '../types';
+import { calculateBMR, calculateTDEE } from '../utils/metabolism';
+import { useAuth } from '../context/AuthContext';
 
 interface AnalysisPageProps {
   weights: WeightEntry[];
   mealsByDay: Record<string, MealRecord[]>;
   workoutsByDay: Record<string, WorkoutItem[]>;
   selectedDay?: string;
+  height: number;
 }
 
 // Seedable deterministic pseudo-random to prevent chart values changing on every render
@@ -32,6 +35,7 @@ export default function AnalysisPage({
   mealsByDay,
   workoutsByDay,
   selectedDay = '今日',
+  height,
 }: AnalysisPageProps) {
   const initialTimeframe = selectedDay === '今日' ? 'today' : (selectedDay as Timeframe);
   const [timeframe, setTimeframe] = useState<Timeframe>(initialTimeframe);
@@ -42,11 +46,21 @@ export default function AnalysisPage({
     setTimeframe(selectedDay === '今日' ? 'today' : (selectedDay as Timeframe));
   }, [selectedDay]);
 
-  // Constants
-  const bmr = 1618;
-
   // Calculate dynamic stats
   const latestWeight = weights[weights.length - 1]?.weight || 72.5;
+
+  // User demographics for personalized metabolism
+  const { appUser, userMetrics, weightPredictions } = useAuth();
+  const age = appUser?.age || 30;
+  const gender = appUser?.gender || 'male';
+  const activityLevel = appUser?.activityLevel || 'sedentary';
+
+  // BMR/TDEE：优先使用数据库触发器计算的值，前端公式兜底
+  const bmr = userMetrics?.bmr ?? calculateBMR(latestWeight, height, age, gender);
+  const tdee = userMetrics?.tdee ?? calculateTDEE(
+    userMetrics?.bmr ?? calculateBMR(latestWeight, height, age, gender),
+    activityLevel
+  );
 
   const getDayStats = (dayName: string) => {
     const dayMeals = mealsByDay[dayName] || [];
@@ -57,7 +71,7 @@ export default function AnalysisPage({
     }, 0);
 
     const workoutBurn = dayWorkouts.reduce((sum, w) => sum + w.calories, 0);
-    const totalBurn = bmr + workoutBurn;
+    const totalBurn = tdee + workoutBurn;
     const balance = intake - totalBurn;
 
     return { intake, workoutBurn, totalBurn, balance };
@@ -75,7 +89,7 @@ export default function AnalysisPage({
     const statsList = days.map(getDayStats);
     displayIntake = Math.round(statsList.reduce((sum, s) => sum + s.intake, 0) / 3);
     displayWorkoutBurn = Math.round(statsList.reduce((sum, s) => sum + s.workoutBurn, 0) / 3);
-    displayBurn = bmr + displayWorkoutBurn;
+    displayBurn = tdee + displayWorkoutBurn;
     displayBalance = displayIntake - displayBurn;
     displayDays = 3;
   } else if (timeframe === '7days') {
@@ -83,7 +97,7 @@ export default function AnalysisPage({
     const statsList = daysList.map(getDayStats);
     displayIntake = Math.round(statsList.reduce((sum, s) => sum + s.intake, 0) / 7);
     displayWorkoutBurn = Math.round(statsList.reduce((sum, s) => sum + s.workoutBurn, 0) / 7);
-    displayBurn = bmr + displayWorkoutBurn;
+    displayBurn = tdee + displayWorkoutBurn;
     displayBalance = displayIntake - displayBurn;
     displayDays = 7;
   } else {
@@ -128,7 +142,7 @@ export default function AnalysisPage({
       // Burn
       const dayWorkouts = workoutsByDay[day] || [];
       const workoutBurn = dayWorkouts.reduce((sum, w) => sum + w.calories, 0);
-      const totalBurn = bmr + workoutBurn;
+      const totalBurn = tdee + workoutBurn;
 
       // Weight
       const weightEntry = weights.find((w) => w.day === day);
@@ -162,7 +176,7 @@ export default function AnalysisPage({
 
         const dayWorkouts = workoutsByDay[dayName] || [];
         const workoutBurn = dayWorkouts.reduce((sum, w) => sum + w.calories, 0);
-        const totalBurn = bmr + workoutBurn;
+        const totalBurn = tdee + workoutBurn;
 
         const weightEntry = weights.find((w) => w.day === dayName);
         const weight = weightEntry ? weightEntry.weight : latestWeight;
@@ -183,7 +197,7 @@ export default function AnalysisPage({
 
         const intake = Math.round(1450 + rand1 * 350);
         const workoutBurn = Math.round(150 + rand2 * 250);
-        const totalBurn = bmr + workoutBurn;
+        const totalBurn = tdee + workoutBurn;
 
         const progressRatio = i / 23;
         const trendWeight = startWeight - progressRatio * (startWeight - baseWeightMonday);
@@ -311,7 +325,10 @@ export default function AnalysisPage({
           <div>
             <span className="text-gray-400 block mb-0.5">预计周减重</span>
             <span className="font-bold text-[#8B5CF6]">
-              {displayBalance < 0 ? Math.abs(parseFloat(((displayBalance * 7) / 7700).toFixed(2))) : 0} kg
+              {weightPredictions
+                ? Math.abs(parseFloat(((weightPredictions.predicted_weight_7d_jin / 2) - latestWeight).toFixed(2)))
+                : displayBalance < 0 ? Math.abs(parseFloat(((displayBalance * 7) / 7700).toFixed(2))) : 0
+              } kg
             </span>
           </div>
         </div>
@@ -470,13 +487,31 @@ export default function AnalysisPage({
           </div>
           <div className="bg-white/60 backdrop-blur-sm rounded-xl p-2.5 text-center border border-[#8B5CF6]/30 shadow-sm relative">
             <span className="text-[10px] text-[#8B5CF6] font-bold block mb-1">预计 7 天后</span>
-            <span className="text-[16px] font-black text-[#8B5CF6]">{(latestWeight - 0.85).toFixed(1)} <span className="text-[9px] font-normal">kg</span></span>
-            <span className="text-[9px] font-bold text-[#10B981] block mt-0.5">-0.85 kg</span>
+            {weightPredictions ? (
+              <>
+                <span className="text-[16px] font-black text-[#8B5CF6]">{(weightPredictions.predicted_weight_7d_jin / 2).toFixed(1)} <span className="text-[9px] font-normal">kg</span></span>
+                <span className="text-[9px] font-bold text-[#10B981] block mt-0.5">
+                  {((weightPredictions.predicted_weight_7d_jin / 2) - latestWeight) <= 0 ? '' : '+'}
+                  {((weightPredictions.predicted_weight_7d_jin / 2) - latestWeight).toFixed(2)} kg
+                </span>
+              </>
+            ) : (
+              <span className="text-[16px] font-black text-[#8B5CF6]">-- <span className="text-[9px] font-normal">kg</span></span>
+            )}
           </div>
           <div className="bg-white/50 backdrop-blur-sm rounded-xl p-2.5 text-center border border-white/40">
             <span className="text-[10px] text-gray-400 block mb-1">预计 30 天后</span>
-            <span className="text-[16px] font-black text-[#8B5CF6]">{(latestWeight - 3.20).toFixed(1)} <span className="text-[9px] font-normal">kg</span></span>
-            <span className="text-[9px] font-bold text-[#10B981] block mt-0.5">-3.20 kg</span>
+            {weightPredictions ? (
+              <>
+                <span className="text-[16px] font-black text-[#8B5CF6]">{(weightPredictions.predicted_weight_30d_jin / 2).toFixed(1)} <span className="text-[9px] font-normal">kg</span></span>
+                <span className="text-[9px] font-bold text-[#10B981] block mt-0.5">
+                  {((weightPredictions.predicted_weight_30d_jin / 2) - latestWeight) <= 0 ? '' : '+'}
+                  {((weightPredictions.predicted_weight_30d_jin / 2) - latestWeight).toFixed(2)} kg
+                </span>
+              </>
+            ) : (
+              <span className="text-[16px] font-black text-[#8B5CF6]">-- <span className="text-[9px] font-normal">kg</span></span>
+            )}
           </div>
         </div>
       </div>

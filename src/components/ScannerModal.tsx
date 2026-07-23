@@ -236,7 +236,7 @@ export default function ScannerModal({ isOpen, onClose, onCapture }: ScannerModa
             </div>
           )}
           <span className="text-[11px] text-gray-500 font-medium">
-            AI 算法支持：智谱 GLM-4V 多模态视觉模型
+            AI 算法支持：Qwen-VL 多模态视觉模型 + 百炼联网搜索
           </span>
         </div>
       </div>

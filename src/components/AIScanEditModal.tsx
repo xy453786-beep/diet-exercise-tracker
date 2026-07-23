@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Minus, Trash2, Sparkles, Scale, Utensils, Loader2 } from 'lucide-react';
+import { X, Plus, Minus, Trash2, Sparkles, Scale, Utensils, Loader2, Database } from 'lucide-react';
 import { AIDietAnalysis, MealCategory } from '../types';
 import type { ZhipuFoodAnalysis } from '../api/zhipu';
+import { saveFoodCorrection } from '../api/zhipu';
 
 interface EditableIngredient {
   id: string;
@@ -26,6 +27,30 @@ interface AIScanEditModalProps {
   onConfirm: (finalAnalysis: AIDietAnalysis) => void;
 }
 
+/** 数据来源徽章 — 显示数据来自哪个 API */
+function SourceBadge({ source }: { source: string }) {
+  const config: Record<string, { label: string; bg: string; text: string }> = {
+    'barcode_scan': { label: '条码识别', bg: 'bg-emerald-100', text: 'text-emerald-700' },
+    'open_food_facts': { label: '条码识别', bg: 'bg-emerald-100', text: 'text-emerald-700' },
+    'food_analyzer': { label: 'AI 食物分析', bg: 'bg-purple-100', text: 'text-purple-700' },
+    'food_composition': { label: '食物成分表', bg: 'bg-emerald-100', text: 'text-emerald-700' },
+    'snack_search': { label: 'AI 联网搜索', bg: 'bg-blue-100', text: 'text-blue-700' },
+    'cache': { label: '缓存命中', bg: 'bg-blue-100', text: 'text-blue-700' },
+    'ai_estimated': { label: 'AI 估算', bg: 'bg-amber-100', text: 'text-amber-700' },
+  };
+
+  // 解析 source 字段（格式："source_key|中文标签"）
+  const key = source.split('|')[0];
+  const cfg = config[key] || { label: key, bg: 'bg-gray-100', text: 'text-gray-600' };
+
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${cfg.bg} ${cfg.text}`}>
+      <Database size={10} />
+      {cfg.label}
+    </span>
+  );
+}
+
 export default function AIScanEditModal({
   isOpen,
   presetIndex,
@@ -39,6 +64,13 @@ export default function AIScanEditModal({
 }: AIScanEditModalProps) {
   const [mealName, setMealName] = useState('');
   const [ingredients, setIngredients] = useState<EditableIngredient[]>([]);
+  const [selectedSizeLevel, setSelectedSizeLevel] = useState<string>('medium');
+
+  // 手动校正热量
+  const [showManualCalibration, setShowManualCalibration] = useState(false);
+  const [manualKcalPer100g, setManualKcalPer100g] = useState('');
+  const [manualWeightG, setManualWeightG] = useState('');
+  const [calibrationSaved, setCalibrationSaved] = useState(false);
 
   // Guess unit from ingredient name
   const guessUnit = (name: string): 'g' | 'ml' => {
@@ -91,10 +123,31 @@ export default function AIScanEditModal({
     }
   }, [isOpen, presetIndex]);
 
+  // Dynamic loading text: switch to snack-search message after 2s
+  const [loadingPhase, setLoadingPhase] = useState<'analyzing' | 'searching'>('analyzing');
+
+  useEffect(() => {
+    if (!geminiLoading) {
+      setLoadingPhase('analyzing');
+      return;
+    }
+    // After 2 seconds, switch to "searching the web" phase
+    const timer = setTimeout(() => {
+      setLoadingPhase('searching');
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [geminiLoading]);
+
   if (!isOpen) return null;
 
   // Loading state while waiting for Gemini
   if (geminiLoading) {
+    const loadingTitle = loadingPhase === 'searching'
+      ? 'AI 正在查询零食营养数据库，请稍候...'
+      : 'AI 正在分析食物...';
+    const loadingSubtitle = loadingPhase === 'searching'
+      ? '联网搜索营养成分表与热量信息'
+      : 'AI 视觉识别 + 联网搜索营养成分';
     return (
       <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
         <div className="bg-white rounded-3xl w-full max-w-[380px] p-8 shadow-2xl flex flex-col items-center gap-4">
@@ -102,8 +155,8 @@ export default function AIScanEditModal({
             <Loader2 size={28} className="text-[#8B5CF6] animate-spin" />
           </div>
           <div className="text-center">
-            <h3 className="text-base font-bold text-gray-900">AI 正在分析食物...</h3>
-            <p className="text-xs text-gray-500 mt-1">智谱 GLM-4V 识别食材并估算营养成分</p>
+            <h3 className="text-base font-bold text-gray-900">{loadingTitle}</h3>
+            <p className="text-xs text-gray-500 mt-1">{loadingSubtitle}</p>
           </div>
           <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
             <div className="h-full bg-gradient-to-r from-[#8B5CF6] to-[#7C3AED] animate-loading-bar rounded-full" style={{width: '60%'}} />
@@ -156,6 +209,25 @@ export default function AIScanEditModal({
     setIngredients((prev) => [...prev, newIng]);
   };
 
+  // 份量等级切换：按比例缩放所有食材重量
+  const sizeFactors: Record<string, number> = { small: 0.6, medium: 1.0, large: 1.5 };
+  const sizeLabels: Record<string, { label: string; desc: string }> = {
+    small: { label: '小份', desc: '约 60% 标准份量' },
+    medium: { label: '中份', desc: '标准一人份' },
+    large: { label: '大份', desc: '约 150% 标准份量' },
+  };
+  const handleSizeChange = (newSize: string) => {
+    if (newSize === selectedSizeLevel) return;
+    const factor = sizeFactors[newSize] / sizeFactors[selectedSizeLevel];
+    setSelectedSizeLevel(newSize);
+    setIngredients((prev) =>
+      prev.map((ing) => ({
+        ...ing,
+        weight: Math.round(ing.weight * factor),
+      }))
+    );
+  };
+
   // Dynamic Calculations
   const calculatedStats = ingredients.reduce(
     (acc, ing) => {
@@ -184,7 +256,32 @@ export default function AIScanEditModal({
   const carbsPercent = Math.round((totalCarbs / totalMacros) * 100);
   const fatPercent = 100 - proteinPercent - carbsPercent;
 
-  // Handle Confirm Submission
+  // 手动校正热量：用户输入每百克热量 + 包装克重，立即更新显示
+  const handleManualCalibration = async () => {
+    const kcalPer100g = parseInt(manualKcalPer100g);
+    if (!kcalPer100g || kcalPer100g <= 0) return;
+
+    const weightG = parseInt(manualWeightG) || ingredients.reduce((s, i) => s + i.weight, 0);
+    if (weightG <= 0) return;
+
+    // 1. 立即更新所有食材的热量密度
+    setIngredients(prev =>
+      prev.map(ing => ({
+        ...ing,
+        caloriesPerGram: kcalPer100g / 100,
+        calories: Math.round(ing.weight * kcalPer100g / 100),
+      }))
+    );
+
+    // 2. 写入后端缓存（fire-and-forget）
+    saveFoodCorrection({
+      foodName: mealName || (geminiAnalysis as any)?.mealName || '未知食物',
+      weight: weightG,
+      calories: Math.round(weightG * kcalPer100g / 100),
+    })
+      .then(() => setCalibrationSaved(true))
+      .catch(() => {});
+  };
   const handleConfirm = () => {
     // Standard advice template customized dynamically
     const categoryName = category === 'breakfast' ? '早餐' : category === 'lunch' ? '午餐' : '晚餐';
@@ -212,6 +309,19 @@ export default function AIScanEditModal({
           : 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=300&auto=format&fit=crop&q=80'),
     };
 
+    // 如果 AI 分析有数据来源，保存校正后的数据到后端缓存（fire-and-forget）
+    if (geminiAnalysis?.source && geminiAnalysis.source !== 'ai_estimated') {
+      const totalWeight = Math.round(ingredients.reduce((s, i) => s + i.weight, 0));
+      saveFoodCorrection({
+        foodName: mealName || geminiAnalysis.mealName || '未知食物',
+        weight: totalWeight || 100,
+        calories: totalCalories,
+        protein: Math.round(totalProtein * 10) / 10,
+        carbs: Math.round(totalCarbs * 10) / 10,
+        fat: Math.round(totalFat * 10) / 10,
+      }).catch(() => {}); // 静默失败，不影响主流程
+    }
+
     onConfirm(finalAnalysis);
   };
 
@@ -230,7 +340,12 @@ export default function AIScanEditModal({
               <Sparkles size={18} className="animate-pulse" />
             </div>
             <div>
-              <h3 className="text-[16px] font-bold text-gray-900">AI 识图结果校对</h3>
+              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
+                AI 识图结果校对
+                {geminiAnalysis?.source && (
+                  <SourceBadge source={geminiAnalysis.source} />
+                )}
+              </h3>
               <p className="text-[11px] text-gray-500 mt-0.5">您可以微调食物重量以确保报告100%精准</p>
             </div>
           </div>
@@ -251,6 +366,19 @@ export default function AIScanEditModal({
               <div>
                 <p className="text-xs font-bold text-amber-700">AI 分析失败，使用默认数据</p>
                 <p className="text-[11px] text-amber-600 mt-0.5">{geminiError}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Snack Search Awareness Banner */}
+          {geminiAnalysis?.source?.startsWith('snack_search') && (
+            <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 flex items-start gap-2">
+              <span className="text-blue-500 text-sm flex-shrink-0">💡</span>
+              <div>
+                <p className="text-xs font-bold text-blue-700">数据来自 AI 联网搜索</p>
+                <p className="text-[11px] text-blue-600 mt-0.5">
+                  若发现热量与包装标注不一致，可使用下方「手动校正热量」录入精确值，永久生效。
+                </p>
               </div>
             </div>
           )}
@@ -353,6 +481,47 @@ export default function AIScanEditModal({
             )}
           </div>
 
+          {/* Portion Size Selector — 用户手动调节份量 */}
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">🤖</span>
+              <div>
+                <p className="text-xs font-bold text-amber-800">
+                  AI 判断：{sizeLabels[selectedSizeLevel]?.label || '中份'}
+                  <span className="text-amber-600 font-normal ml-1">
+                    （约 {ingredients.reduce((s, i) => s + i.weight, 0)}g）
+                  </span>
+                </p>
+                <p className="text-[10px] text-amber-600 mt-0.5">
+                  拖动下方按钮调节份量，帮助 AI 学习更准的克重
+                </p>
+              </div>
+            </div>
+
+              {/* Size Buttons */}
+              <div className="flex gap-2">
+                {(['small', 'medium', 'large'] as const).map((size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    onClick={() => handleSizeChange(size)}
+                    className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all active:scale-95 ${
+                      selectedSizeLevel === size
+                        ? 'bg-amber-500 text-white shadow-md shadow-amber-200'
+                        : 'bg-white text-amber-700 border border-amber-200 hover:bg-amber-50'
+                    }`}
+                  >
+                    <div>{sizeLabels[size].label}</div>
+                    <div className={`text-[10px] font-normal mt-0.5 ${
+                      selectedSizeLevel === size ? 'text-amber-100' : 'text-amber-500'
+                    }`}>
+                      {sizeLabels[size].desc}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
           {/* Dynamic Nutrients Breakdown */}
           <div className="p-4 rounded-2xl bg-gradient-to-br from-[#FAF8FF] to-[#F1EAFF] border border-[#E9E1FF] space-y-3">
             <div className="flex justify-between items-end">
@@ -412,6 +581,86 @@ export default function AIScanEditModal({
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* 手动校正热量 — 折叠面板 */}
+          <div className="border border-dashed border-amber-300 rounded-2xl overflow-hidden">
+            {/* Toggle header */}
+            <button
+              type="button"
+              onClick={() => {
+                setShowManualCalibration(!showManualCalibration);
+                setCalibrationSaved(false);
+              }}
+              className="w-full p-3 flex items-center justify-between bg-amber-50/70 hover:bg-amber-50 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-sm">{calibrationSaved ? '✅' : '🤔'}</span>
+                <span className="text-xs font-semibold text-amber-800">
+                  {calibrationSaved ? '热量已校正！' : '觉得热量不准确？'}
+                </span>
+                {calibrationSaved && (
+                  <span className="text-[10px] text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full">
+                    已保存
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1 text-amber-600">
+                <span className="text-[10px] font-bold">
+                  {showManualCalibration ? '收起' : '手动校正热量'}
+                </span>
+                <span className={`transform transition-transform ${showManualCalibration ? 'rotate-180' : ''}`}>
+                  ▾
+                </span>
+              </div>
+            </button>
+
+            {/* Expandable inputs */}
+            {showManualCalibration && (
+              <div className="p-4 space-y-3 bg-white">
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className="text-[10px] font-bold text-gray-500 block mb-1">
+                      每100克热量 (kcal)
+                    </label>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      value={manualKcalPer100g}
+                      onChange={e => setManualKcalPer100g(e.target.value)}
+                      placeholder="如 820"
+                      className="w-full px-3 py-2.5 text-sm font-bold text-gray-800 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-amber-400 focus:bg-white transition-all"
+                    />
+                  </div>
+                  <div className="w-24">
+                    <label className="text-[10px] font-bold text-gray-500 block mb-1">
+                      克重 (可选)
+                    </label>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      value={manualWeightG}
+                      onChange={e => setManualWeightG(e.target.value)}
+                      placeholder={`${Math.round(ingredients.reduce((s, i) => s + i.weight, 0))}g`}
+                      className="w-full px-3 py-2.5 text-sm font-bold text-gray-800 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-amber-400 focus:bg-white transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="text-[10px] text-gray-400 leading-relaxed">
+                  💡 修改后将立即更新热量显示，并永久保存到个人数据库，下次识别自动使用精准数据。
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleManualCalibration}
+                  disabled={!manualKcalPer100g || parseInt(manualKcalPer100g) <= 0}
+                  className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white rounded-xl text-xs font-bold transition-all active:scale-[0.98]"
+                >
+                  保存并应用
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

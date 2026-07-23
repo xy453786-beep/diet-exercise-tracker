@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import { Plus, Timer, Heart, Activity, Flame, Trash2, Calendar, ChevronDown } from 'lucide-react';
 import { WorkoutItem } from '../types';
 

@@ -5,6 +5,10 @@ export interface User {
   avatarUrl: string;
   height: number;
   weight: number;
+  gender?: 'male' | 'female';
+  age?: number;
+  activityLevel?: import('./utils/metabolism').ActivityLevel;
+  hasCompletedSurvey?: boolean;
 }
 
 export interface MealItem {
@@ -62,4 +66,39 @@ export interface AIDietAnalysis {
   };
   ingredients: AIRecpIngredient[];
   image: string;
+}
+
+// 食物成分表搜索结果（每 100g 数据）
+export interface FoodCompositionResult {
+  food_code: string;
+  food_name: string;
+  category: string;
+  subcategory: string | null;
+  energy_kcal: number;
+  protein: number;
+  fat: number;
+  carbs: number;
+}
+
+// 食物营养分析结果（AI 计算后）
+export interface FoodAnalyzeResult {
+  foodName: string;
+  matchedFood: string | null;
+  category: string | null;
+  weight: number;
+  source: 'database' | 'ai_estimated' | 'database_fallback';
+  nutrition: {
+    calories: number;
+    protein: number;
+    carbs: number;
+    fat: number;
+  };
+  per100g: {
+    calories: number;
+    protein: number;
+    carbs: number;
+    fat: number;
+  } | null;
+  suggestion: string | null;
+  exercise: string | null;
 }

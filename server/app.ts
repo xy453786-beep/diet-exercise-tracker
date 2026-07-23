@@ -8,6 +8,7 @@ import { mealsRouter } from './routes/meals.js';
 import { workoutsRouter } from './routes/workouts.js';
 import { waterRouter } from './routes/water.js';
 import { analysesRouter } from './routes/analyses.js';
+import { foodRouter } from './routes/food.js';
 
 export function createApp() {
   const app = express();
@@ -48,6 +49,7 @@ export function createApp() {
   app.use('/api/workouts', workoutsRouter);
   app.use('/api/water', waterRouter);
   app.use('/api/analyses', analysesRouter);
+  app.use('/api/food', foodRouter);
 
   // Global error handler
   app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { X, Plus, Sparkles, Scale, Utensils, Flame, Loader2, Minus } from 'lucide-react';
-import { MealCategory, MealItem } from '../types';
+import React, { useState, useRef, useEffect } from 'react';
+import { X, Plus, Sparkles, Scale, Utensils, Flame, Loader2, Minus, Search } from 'lucide-react';
+import { MealCategory, MealItem, FoodCompositionResult } from '../types';
+import { searchFood, analyzeFood } from '../api/endpoints';
 
 interface AddFoodModalProps {
   isOpen: boolean;
@@ -10,94 +11,11 @@ interface AddFoodModalProps {
 }
 
 
-// Smart client-side nutrition database for realistic "AI estimation"
-function estimateNutrients(name: string, portionStr: string) {
-  // Extract numerical weight from portion if possible
-  let weight = 100; // default 100g
+/** 从份量字符串中解析克数 */
+function parseWeight(portionStr: string): number {
   const weightMatch = portionStr.match(/(\d+)\s*(g|克)/i);
-  if (weightMatch) {
-    weight = parseInt(weightMatch[1], 10);
-  } else {
-    // Check if there are other numbers like "1", "2"
-    const countMatch = portionStr.match(/^(\d+)/);
-    if (countMatch) {
-      const count = parseInt(countMatch[1], 10);
-      if (count > 0 && count < 10) {
-        // If it contains "个" or "片" or "包"
-        weight = count * 50; // estimate 50g per unit
-      }
-    }
-  }
-
-  const lowerName = name.toLowerCase();
-  let baseCal = 1.2; // calories per gram
-  let baseProtein = 0.05; // g per gram
-  let baseCarb = 0.15; // g per gram
-  let baseFat = 0.03; // g per gram
-
-  if (lowerName.includes('鸡') || lowerName.includes('chicken') || lowerName.includes('胸')) {
-    baseCal = 1.33;
-    baseProtein = 0.22;
-    baseCarb = 0.00;
-    baseFat = 0.025;
-  } else if (lowerName.includes('蛋') || lowerName.includes('egg')) {
-    baseCal = 1.5;
-    baseProtein = 0.12;
-    baseCarb = 0.01;
-    baseFat = 0.10;
-  } else if (lowerName.includes('牛') || lowerName.includes('beef')) {
-    baseCal = 2.2;
-    baseProtein = 0.21;
-    baseCarb = 0.00;
-    baseFat = 0.14;
-  } else if (lowerName.includes('鱼') || lowerName.includes('fish') || lowerName.includes('三文鱼') || lowerName.includes('salmon')) {
-    baseCal = 1.8;
-    baseProtein = 0.20;
-    baseCarb = 0.00;
-    baseFat = 0.10;
-  } else if (lowerName.includes('米') || lowerName.includes('饭') || lowerName.includes('面') || lowerName.includes('rice') || lowerName.includes('noodle')) {
-    baseCal = 1.2;
-    baseProtein = 0.03;
-    baseCarb = 0.26;
-    baseFat = 0.005;
-  } else if (lowerName.includes('吐司') || lowerName.includes('面包') || lowerName.includes('bread') || lowerName.includes('三明治')) {
-    baseCal = 2.4;
-    baseProtein = 0.08;
-    baseCarb = 0.45;
-    baseFat = 0.03;
-  } else if (lowerName.includes('薯') || lowerName.includes('potato') || lowerName.includes('玉米')) {
-    baseCal = 0.85;
-    baseProtein = 0.018;
-    baseCarb = 0.19;
-    baseFat = 0.001;
-  } else if (lowerName.includes('菜') || lowerName.includes('西蓝花') || lowerName.includes('vegetable') || lowerName.includes('broccoli') || lowerName.includes('沙拉')) {
-    baseCal = 0.4;
-    baseProtein = 0.02;
-    baseCarb = 0.06;
-    baseFat = 0.002;
-  } else if (lowerName.includes('果') || lowerName.includes('apple') || lowerName.includes('banana') || lowerName.includes('香蕉') || lowerName.includes('fruit')) {
-    baseCal = 0.6;
-    baseProtein = 0.008;
-    baseCarb = 0.15;
-    baseFat = 0.002;
-  } else if (lowerName.includes('牛油果') || lowerName.includes('avocado')) {
-    baseCal = 1.6;
-    baseProtein = 0.02;
-    baseCarb = 0.08;
-    baseFat = 0.15;
-  } else if (lowerName.includes('酸奶') || lowerName.includes('yogurt') || lowerName.includes('奶')) {
-    baseCal = 0.75;
-    baseProtein = 0.055;
-    baseCarb = 0.07;
-    baseFat = 0.03;
-  }
-
-  return {
-    calories: Math.max(1, Math.round(weight * baseCal)),
-    protein: Math.round(weight * baseProtein * 10) / 10,
-    carbs: Math.round(weight * baseCarb * 10) / 10,
-    fat: Math.round(weight * baseFat * 10) / 10,
-  };
+  if (weightMatch) return parseInt(weightMatch[1], 10);
+  return 100; // 默认 100g
 }
 
 export default function AddFoodModal({ isOpen, category, onClose, onAdd }: AddFoodModalProps) {
@@ -112,6 +30,25 @@ export default function AddFoodModal({ isOpen, category, onClose, onAdd }: AddFo
   const [isEstimating, setIsEstimating] = useState(false);
   const [hasEstimated, setHasEstimated] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [analyzeSource, setAnalyzeSource] = useState('');
+
+  // Search-as-you-type
+  const [searchResults, setSearchResults] = useState<FoodCompositionResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // 点击外部关闭下拉
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   if (!isOpen || !category) return null;
 
@@ -121,9 +58,73 @@ export default function AddFoodModal({ isOpen, category, onClose, onAdd }: AddFo
     dinner: '晚餐',
   };
 
+  // 食物名称输入变化 → 实时搜索
+  const handleNameChange = (value: string) => {
+    setCustomName(value);
+    if (errorMessage) setErrorMessage('');
 
-  // AI Estimate Trigger
-  const handleAIEstimate = () => {
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+
+    if (value.trim().length < 2) {
+      setSearchResults([]);
+      setShowDropdown(false);
+      return;
+    }
+
+    searchTimeout.current = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const results = await searchFood(value.trim(), 8);
+        setSearchResults(results);
+        setShowDropdown(results.length > 0);
+      } catch {
+        setSearchResults([]);
+        setShowDropdown(false);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300);
+  };
+
+  // 选中搜索结果 → 调用 analyzeFood 获取精确营养数据
+  const handleSelectResult = async (result: FoodCompositionResult) => {
+    setCustomName(result.food_name);
+    setShowDropdown(false);
+    setSearchResults([]);
+    setErrorMessage('');
+
+    const weight = parseWeight(customPortion || '150g');
+    setIsEstimating(true);
+    try {
+      const analysis = await analyzeFood(result.food_name, weight);
+      setCustomCalories(analysis.nutrition.calories.toString());
+      setCustomProtein(analysis.nutrition.protein.toString());
+      setCustomCarbs(analysis.nutrition.carbs.toString());
+      setCustomFat(analysis.nutrition.fat.toString());
+      setHasEstimated(true);
+      setAnalyzeSource(
+        analysis.source === 'database'
+          ? '（来自中国食物成分表数据库）'
+          : analysis.source === 'ai_estimated'
+          ? '（AI 智能估算）'
+          : '（数据库匹配）'
+      );
+    } catch (err: any) {
+      // 回退：直接使用搜索结果中的每 100g 数据
+      const ratio = weight / 100;
+      setCustomCalories(Math.round(result.energy_kcal * ratio).toString());
+      setCustomProtein((result.protein * ratio).toFixed(1));
+      setCustomCarbs((result.carbs * ratio).toFixed(1));
+      setCustomFat((result.fat * ratio).toFixed(1));
+      setHasEstimated(true);
+      setAnalyzeSource('（数据库直接换算）');
+    } finally {
+      setIsEstimating(false);
+    }
+  };
+
+  // AI Estimate Trigger — 使用后端分析
+  const handleAIEstimate = async () => {
     if (!customName.trim()) {
       setErrorMessage('请输入食物名称，以便 AI 进行热量测算');
       return;
@@ -131,16 +132,29 @@ export default function AddFoodModal({ isOpen, category, onClose, onAdd }: AddFo
     setErrorMessage('');
     setIsEstimating(true);
 
-    // Simulate real AI scanning and computing based on input names & portion
-    setTimeout(() => {
-      const results = estimateNutrients(customName, customPortion || '150g');
-      setCustomCalories(results.calories.toString());
-      setCustomProtein(results.protein.toString());
-      setCustomCarbs(results.carbs.toString());
-      setCustomFat(results.fat.toString());
-      setIsEstimating(false);
+    const weight = parseWeight(customPortion || '150g');
+    try {
+      const analysis = await analyzeFood(customName.trim(), weight);
+      setCustomCalories(analysis.nutrition.calories.toString());
+      setCustomProtein(analysis.nutrition.protein.toString());
+      setCustomCarbs(analysis.nutrition.carbs.toString());
+      setCustomFat(analysis.nutrition.fat.toString());
       setHasEstimated(true);
-    }, 1200);
+      setAnalyzeSource(
+        analysis.source === 'database'
+          ? '（来自中国食物成分表数据库）'
+          : analysis.source === 'ai_estimated'
+          ? '（AI 智能估算）'
+          : '（数据库匹配）'
+      );
+      if (analysis.matchedFood && analysis.matchedFood !== customName.trim()) {
+        setCustomName(analysis.matchedFood);
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'AI 测算失败，请手动输入营养成分');
+    } finally {
+      setIsEstimating(false);
+    }
   };
 
   const handleAddCustom = (e: React.FormEvent) => {
@@ -233,22 +247,53 @@ export default function AddFoodModal({ isOpen, category, onClose, onAdd }: AddFo
             {/* Inputs: Name & Portion */}
             <div className="space-y-3 bg-gray-50/50 p-4.5 rounded-2xl border border-gray-100/80">
               <div className="grid grid-cols-5 gap-3.5 items-end">
-                <div className="col-span-3 space-y-1.5">
+                <div className="col-span-3 space-y-1.5 relative" ref={dropdownRef}>
                   <label htmlFor="custom-food-name" className="text-[11px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
                     <Utensils size={11} /> 食物名称
                   </label>
-                  <input
-                    id="custom-food-name"
-                    type="text"
-                    required
-                    placeholder="例如：全麦吐司、香煎鸡胸肉"
-                    value={customName}
-                    onChange={(e) => {
-                      setCustomName(e.target.value);
-                      if (errorMessage) setErrorMessage('');
-                    }}
-                    className="w-full px-3.5 py-2 rounded-xl border border-gray-200 bg-white text-xs font-semibold text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#8B5CF6]/20 focus:border-[#8B5CF6] transition-all"
-                  />
+                  <div className="relative">
+                    <input
+                      id="custom-food-name"
+                      type="text"
+                      required
+                      placeholder="例如：全麦吐司、香煎鸡胸肉"
+                      value={customName}
+                      onChange={(e) => handleNameChange(e.target.value)}
+                      onFocus={() => { if (searchResults.length > 0) setShowDropdown(true); }}
+                      className="w-full px-3.5 py-2 rounded-xl border border-gray-200 bg-white text-xs font-semibold text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#8B5CF6]/20 focus:border-[#8B5CF6] transition-all"
+                    />
+                    {isSearching && (
+                      <Loader2 size={12} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 animate-spin" />
+                    )}
+                  </div>
+                  {/* 搜索建议下拉 */}
+                  {showDropdown && searchResults.length > 0 && (
+                    <div className="absolute z-30 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto">
+                      {searchResults.map((r, i) => (
+                        <button
+                          key={r.food_code || i}
+                          type="button"
+                          onClick={() => handleSelectResult(r)}
+                          className="w-full text-left px-3.5 py-2.5 flex items-center justify-between hover:bg-[#F1EAFF] transition-colors border-b border-gray-50 last:border-0"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <span className="text-xs font-semibold text-gray-800 block truncate">
+                              {r.food_name}
+                            </span>
+                            <span className="text-[10px] text-gray-400">
+                              {r.category}{r.subcategory ? ` · ${r.subcategory}` : ''}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 ml-2 shrink-0">
+                            <span className="text-[10px] font-bold text-amber-600">
+                              {r.energy_kcal} kcal
+                            </span>
+                            <Search size={11} className="text-gray-300" />
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="col-span-2 space-y-1.5">
@@ -292,7 +337,7 @@ export default function AddFoodModal({ isOpen, category, onClose, onAdd }: AddFo
             {/* Editable Calories & Macros inputs */}
             <div className="space-y-3.5">
               <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
-                能量与营养素成分 ({hasEstimated ? '✨ AI 测算生成，可手动微调' : '可直接手动输入'})
+                能量与营养素成分 {hasEstimated ? `✨ ${analyzeSource || 'AI 测算生成，可手动微调'}` : '（可直接手动输入）'}
               </span>
 
               {/* Total calories input row */}

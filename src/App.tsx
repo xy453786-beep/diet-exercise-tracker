@@ -6,8 +6,9 @@ import { useAuth } from './context/AuthContext';
 import { dayLabelToDate, dateToDayLabel, getCurrentWeekRange } from './utils/dates';
 import * as endpoints from './api/endpoints';
 import LoginPage from './components/LoginPage';
+import OnboardingPage from './components/OnboardingPage';
 import { Camera } from 'lucide-react';
-import { analyzeFoodImage, getZhipuApiKey, type ZhipuFoodAnalysis } from './api/zhipu';
+import { analyzeFoodImageBackend, type ZhipuFoodAnalysis } from './api/zhipu';
 
 import Header from './components/Header';
 import TabBar from './components/TabBar';
@@ -53,6 +54,8 @@ export default function App() {
 
   // ---- Derived user values ----
   const height = user?.height || 178;
+  const selectedWeightEntry = weights.find(w => w.day === selectedDay) || weights[weights.length - 1];
+  const selectedWeight = selectedWeightEntry?.weight || 72.5;
 
   // ---- Modal States ----
   const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -196,20 +199,20 @@ export default function App() {
     }
   };
 
-  const handleAddWater = async () => {
+  const handleAddWater = async (cupSize: number) => {
     const date = dayLabelToDate(selectedDay);
     try {
-      await endpoints.setWater(date, 250, 'add');
+      await endpoints.setWater(date, cupSize, 'add');
     } catch { /* continue */ }
     setWaterIntakes((prev) => ({
       ...prev,
-      [selectedDay]: Math.min(4000, (prev[selectedDay] ?? 0) + 250),
+      [selectedDay]: Math.min(4000, (prev[selectedDay] ?? 0) + cupSize),
     }));
   };
 
-  const handleSubtractWater = async () => {
+  const handleSubtractWater = async (cupSize: number) => {
     const date = dayLabelToDate(selectedDay);
-    const newAmount = Math.max(0, (waterIntakes[selectedDay] ?? 0) - 250);
+    const newAmount = Math.max(0, (waterIntakes[selectedDay] ?? 0) - cupSize);
     try {
       await endpoints.setWater(date, newAmount, 'set');
     } catch { /* continue */ }
@@ -327,25 +330,15 @@ export default function App() {
     setCapturedFoodImage(imageDataUrl);
     setGeminiError(null);
 
-    const apiKey = getZhipuApiKey();
-    if (!apiKey) {
-      // No API key configured, fall back to preset data
-      console.warn('VITE_ZHIPU_API_KEY 未配置，使用默认数据');
-      setGeminiError('未配置智谱 API Key（缺少 VITE_ZHIPU_API_KEY 环境变量）');
-      setActiveScanPresetIndex(0);
-      setEditingScanResult(true);
-      return;
-    }
-
-    // Call 智谱 GLM-4V
+    // 使用后端 API：图片上传 → Qwen-VL 视觉识别 → 联网搜索 → 营养计算
     setGeminiLoading(true);
     try {
-      const analysis = await analyzeFoodImage(imageDataUrl, apiKey);
+      const analysis = await analyzeFoodImageBackend(imageDataUrl);
       setGeminiAnalysis(analysis);
       setActiveScanPresetIndex(-1); // Signal: use AI data
       setEditingScanResult(true);
     } catch (err: any) {
-      console.error('智谱 AI 分析失败:', err);
+      console.error('AI 食物识别失败:', err);
       setGeminiError(err.message || 'AI 分析失败');
       setActiveScanPresetIndex(0);
       setEditingScanResult(true);
@@ -393,6 +386,27 @@ export default function App() {
     );
   }
 
+  // Decide what to render inside the mobile viewport
+  const renderContent = () => {
+    if (!user) {
+      return (
+        <div className="flex-1 overflow-y-auto scrollbar-none">
+          <LoginPage />
+        </div>
+      );
+    }
+
+    if (!user.hasCompletedSurvey) {
+      return (
+        <div className="flex-1 overflow-y-auto scrollbar-none">
+          <OnboardingPage />
+        </div>
+      );
+    }
+
+    return null;
+  };
+
   return (
     <div className="min-h-screen relative flex items-center justify-center p-0 sm:p-4 font-sans select-none antialiased overflow-hidden">
       {/* Background Ambient Glowing Orbs */}
@@ -405,7 +419,7 @@ export default function App() {
         id="mobile-viewport"
         className="w-full sm:w-[360px] md:w-[375px] max-w-[390px] sm:h-[740px] md:h-[760px] max-h-full h-screen glass-panel sm:rounded-[40px] sm:shadow-[0_32px_64px_rgba(139,92,246,0.18)] border-0 sm:border-4 sm:border-white/50 flex flex-col relative overflow-hidden transition-all duration-300"
       >
-        {user ? (
+        {user && user.hasCompletedSurvey ? (
           <>
             {/* Persistent Header */}
             <Header
@@ -487,6 +501,7 @@ export default function App() {
                       mealsByDay={mealsByDay}
                       workoutsByDay={workoutsByDay}
                       selectedDay={selectedDay}
+                      height={height}
                     />
                   )}
 
@@ -521,13 +536,11 @@ export default function App() {
             <TabBar currentPage={currentPage} onPageChange={(page) => setCurrentPage(page)} />
           </>
         ) : (
-          <div className="flex-1 overflow-y-auto scrollbar-none">
-            <LoginPage />
-          </div>
+          renderContent()
         )}
 
         {/* Overlay Modals */}
-        {user && (
+        {user && user.hasCompletedSurvey && (
           <>
             <FoodMethodSelectorModal
               isOpen={foodChoiceCategory !== null}
@@ -585,6 +598,7 @@ export default function App() {
               isOpen={isAddWorkoutOpen}
               onClose={() => setIsAddWorkoutOpen(false)}
               onAdd={handleAddWorkout}
+              weight={selectedWeight}
             />
           </>
         )}

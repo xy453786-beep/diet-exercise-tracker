@@ -25,11 +25,3 @@ export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, {
     persistSession: false,
   },
 });
-
-// Helper to create a client scoped to a specific user's JWT
-export const supabaseForUser = (jwt: string) =>
-  createClient(supabaseUrl, process.env.SUPABASE_ANON_KEY || '', {
-    global: {
-      headers: { Authorization: `Bearer ${jwt}` },
-    },
-  });

@@ -12,21 +12,10 @@ export interface ZhipuFoodAnalysis {
   ingredients: ZhipuIngredient[];
   suggestion: string;
   exercise: string;
+  source?: string;
+  foodType?: string;
+  cookingMethod?: string;
 }
-
-const SYSTEM_PROMPT = `你是专业营养师，根据食物图片识别菜品并分析营养。必须只输出 JSON，不准说"抱歉无法识别"。不确定就推测。
-
-常用食物参考（每100g/ml）：
-- 黑咖啡 2cal, 美式咖啡 5cal, 拿铁咖啡 60cal, 卡布奇诺 45cal
-- 白米饭 116cal, 馒头 223cal, 面条 110cal
-- 鸡胸肉 133cal, 三文鱼 208cal, 鸡蛋 144cal
-- 西兰花 34cal, 菠菜 23cal, 番茄 18cal
-- 牛奶 66cal(全脂)/35cal(脱脂), 酸奶 61cal
-
-严格只输出此 JSON（数字不加引号）：
-{"mealName":"菜品","ingredients":[{"name":"食材","weight":总克,"calories":总千卡,"protein":蛋白质克,"carbs":碳水克,"fat":脂肪克}],"suggestion":"优化建议","exercise":"运动建议"}
-
-每次分析必须基于图片实际内容，使用参考数据估算，保证同类食物结果相近。`;
 
 import { supabase } from './client';
 
@@ -59,80 +48,101 @@ async function uploadImageToStorage(imageDataUrl: string): Promise<string> {
 }
 
 /**
- * Analyze a food image using Zhipu GLM-4V (智谱视觉模型).
- * Accepts an image URL (GLM-4V-Flash free tier only supports URLs, not base64).
+ * 通过后端 API 分析食物图片。
+ * 流程：上传图片到 Supabase Storage → 调用后端 POST /api/food/analyze-image
+ * 后端管线：条码扫描 → Qwen-VL 识别 → 缓存 → 成分表 → 联网搜索 → 兜底
  */
-export async function analyzeFoodImage(
-  imageDataUrl: string,
-  apiKey: string
+export async function analyzeFoodImageBackend(
+  imageDataUrl: string
 ): Promise<ZhipuFoodAnalysis> {
-  // Step 1: Upload to Supabase Storage to get a public URL
+  const API_BASE = (import.meta as any).env?.VITE_API_URL || '';
+
+  // Step 1: 上传图片到 Supabase Storage
   const imageUrl = await uploadImageToStorage(imageDataUrl);
 
-  // Step 2: Call Zhipu API with URL
-  const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+  // Step 2: 获取认证 Token
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+  if (!token) throw new Error('未登录，请先登录');
+
+  // Step 3: 调用后端分析接口（15s 超时以适应联网搜索）
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  const response = await fetch(`${API_BASE}/api/food/analyze-image`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({
-      model: 'glm-4v-flash',
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'image_url', image_url: { url: imageUrl } },
-            { type: 'text', text: SYSTEM_PROMPT },
-          ],
-        },
-      ],
-      temperature: 0.01,
-      top_p: 0.3,
-      max_tokens: 1024,
-    }),
-  });
+    body: JSON.stringify({ imageUrl }),
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timeoutId));
 
   if (!response.ok) {
-    const err = await response.text();
-    let msg = `API 请求失败 (${response.status})`;
-    try {
-      const j = JSON.parse(err);
-      msg = j?.error?.message || msg;
-    } catch {}
+    const err = await response.json().catch(() => ({}));
+    const msg = (err as any)?.error || `API 请求失败 (${response.status})`;
     throw new Error(msg);
   }
 
   const data = await response.json();
-  const text = data?.choices?.[0]?.message?.content;
 
-  if (!text) {
-    throw new Error('智谱 AI 未返回有效响应');
+  // 转换为 ZhipuFoodAnalysis 兼容格式
+  if (!data.mealName && data.identification?.food_name) {
+    data.mealName = data.identification.food_name;
+  }
+  if (!data.ingredients?.length) {
+    data.ingredients = [
+      {
+        name: data.mealName || '未知食物',
+        weight: data.weight || 0,
+        calories: data.nutrition?.calories || 0,
+        protein: data.nutrition?.protein || 0,
+        carbs: data.nutrition?.carbs || 0,
+        fat: data.nutrition?.fat || 0,
+      },
+    ];
   }
 
-  // Parse JSON (handle possible markdown code blocks)
-  let jsonStr = text.trim();
-  if (jsonStr.startsWith('```json')) jsonStr = jsonStr.slice(7);
-  else if (jsonStr.startsWith('```')) jsonStr = jsonStr.slice(3);
-  if (jsonStr.endsWith('```')) jsonStr = jsonStr.slice(0, -3);
-  jsonStr = jsonStr.trim();
-
-  try {
-    const analysis: ZhipuFoodAnalysis = JSON.parse(jsonStr);
-    if (!analysis.mealName || !analysis.ingredients?.length) {
-      throw new Error('智谱 AI 返回数据不完整');
-    }
-    return analysis;
-  } catch (e: any) {
-    if (e instanceof SyntaxError) {
-      console.error('智谱原始返回:', text);
-      throw new Error(`AI 返回格式异常：${text.slice(0, 80)}...`);
-    }
-    throw e;
-  }
+  return {
+    mealName: data.mealName || '未知食物',
+    ingredients: data.ingredients || [],
+    suggestion: data.suggestion || '',
+    exercise: data.exercise || '',
+    source: data.source || 'food_analyzer',
+    foodType: data.identification?.food_type || undefined,
+    cookingMethod: data.identification?.cooking_method || undefined,
+  };
 }
 
-/** Get Zhipu API key from environment. */
-export function getZhipuApiKey(): string | null {
-  return import.meta.env.VITE_ZHIPU_API_KEY || null;
+/**
+ * 保存用户手动校正的营养数据到后端缓存。
+ * 标注 is_user_calibrated = true，下次相同食物优先返回校正值。
+ */
+export async function saveFoodCorrection(data: {
+  foodName: string;
+  brand?: string;
+  weight?: number;
+  calories: number;
+  protein?: number;
+  carbs?: number;
+  fat?: number;
+}): Promise<void> {
+  const API_BASE = (import.meta as any).env?.VITE_API_URL || '';
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+  if (!token) throw new Error('未登录');
+
+  const response = await fetch(`${API_BASE}/api/food/cache/correct`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    console.warn('保存校正数据失败:', await response.json().catch(() => ({})));
+  }
 }

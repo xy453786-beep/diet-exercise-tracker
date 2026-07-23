@@ -1,72 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { X, Plus, Sparkles, Timer, Flame, Loader2 } from 'lucide-react';
 import { WorkoutItem } from '../types';
+import { estimateWorkout } from '../utils/met-table';
 
 interface AddWorkoutModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAdd: (workout: WorkoutItem) => void;
+  /** 用户当前体重（kg），用于准确的 MET 热量计算 */
+  weight: number;
 }
 
-// Smart calorie estimation based on MET values for common workouts
-function estimateWorkoutData(name: string, minutes: number) {
-  const lowerName = name.toLowerCase();
-  let met = 5.0; // Default MET (medium intensity)
-  let category: 'aerobic' | 'resistance' = 'aerobic';
-  let intensity: 'low' | 'medium' | 'high' | 'medium-high' = 'medium';
-
-  // Keyword mapping for specific activities
-  if (lowerName.includes('跑') || lowerName.includes('run')) {
-    met = 8.5;
-    intensity = 'medium-high';
-    category = 'aerobic';
-  } else if (lowerName.includes('力量') || lowerName.includes('无氧') || lowerName.includes('铁') || lowerName.includes('哑铃') || lowerName.includes('杠铃') || lowerName.includes('深蹲') || lowerName.includes('俯卧撑') || lowerName.includes('健身房')) {
-    met = 5.5;
-    intensity = 'medium';
-    category = 'resistance';
-  } else if (lowerName.includes('泳') || lowerName.includes('swim')) {
-    met = 7.0;
-    intensity = 'medium';
-    category = 'aerobic';
-  } else if (lowerName.includes('单车') || lowerName.includes('骑') || lowerName.includes('cycle') || lowerName.includes('bike')) {
-    met = 6.8;
-    intensity = 'medium';
-    category = 'aerobic';
-  } else if (lowerName.includes('瑜伽') || lowerName.includes('yoga') || lowerName.includes('拉伸') || lowerName.includes('stretch')) {
-    met = 2.8;
-    intensity = 'low';
-    category = 'aerobic';
-  } else if (lowerName.includes('球') || lowerName.includes('羽毛') || lowerName.includes('篮球') || lowerName.includes('足球') || lowerName.includes('网球')) {
-    met = 6.0;
-    intensity = 'medium';
-    category = 'aerobic';
-  } else if (lowerName.includes('绳') || lowerName.includes('jump')) {
-    met = 9.0;
-    intensity = 'high';
-    category = 'aerobic';
-  } else if (lowerName.includes('散步') || lowerName.includes('走') || lowerName.includes('walk')) {
-    met = 3.5;
-    intensity = 'low';
-    category = 'aerobic';
-  } else if (lowerName.includes('高强度') || lowerName.includes('hiit') || lowerName.includes('搏击') || lowerName.includes('波比')) {
-    met = 9.5;
-    intensity = 'high';
-    category = 'aerobic';
-  }
-
-  // Formula: calories ≈ MET * 3.5 * weight_kg / 200 * minutes
-  // Assume a default weight of 65kg
-  const weight = 65;
-  const cal = Math.round(met * 3.5 * weight / 200 * minutes);
-
-  return {
-    calories: Math.max(10, cal),
-    category,
-    intensity,
-  };
-}
-
-export default function AddWorkoutModal({ isOpen, onClose, onAdd }: AddWorkoutModalProps) {
+export default function AddWorkoutModal({ isOpen, onClose, onAdd, weight }: AddWorkoutModalProps) {
   const [customType, setCustomType] = useState('');
   const [customDuration, setCustomDuration] = useState('30');
   
@@ -90,7 +35,7 @@ export default function AddWorkoutModal({ isOpen, onClose, onAdd }: AddWorkoutMo
 
     setIsCalculating(true);
     const timer = setTimeout(() => {
-      const result = estimateWorkoutData(customType, durationNum);
+      const result = estimateWorkout(customType.trim(), weight, durationNum);
       setEstimatedCalories(result.calories);
       setIsCalculating(false);
     }, 400);
@@ -105,7 +50,7 @@ export default function AddWorkoutModal({ isOpen, onClose, onAdd }: AddWorkoutMo
     if (!customType.trim() || !customDuration) return;
 
     const durationNum = parseInt(customDuration, 10) || 30;
-    const { calories, category, intensity } = estimateWorkoutData(customType.trim(), durationNum);
+    const { calories, category, intensity } = estimateWorkout(customType.trim(), weight, durationNum);
 
     const formattedDuration = `${durationNum}'00"`;
 

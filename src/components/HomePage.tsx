@@ -3,14 +3,16 @@ import { Sparkles, Droplet, Flame, ArrowRight, TrendingDown, X } from 'lucide-re
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
 import { WeightEntry, MealRecord, WorkoutItem } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
+import { calculateBMR, calculateTDEE } from '../utils/metabolism';
+import { useAuth } from '../context/AuthContext';
 
 interface HomePageProps {
   weights: WeightEntry[];
   meals: MealRecord[];
   workouts: WorkoutItem[];
   waterIntake: number;
-  onAddWater: () => void;
-  onSubtractWater: () => void;
+  onAddWater: (cupSize: number) => void;
+  onSubtractWater: (cupSize: number) => void;
   onNavigateToAI: () => void;
   height: number;
   onUpdateHeight: (h: number) => void;
@@ -37,6 +39,18 @@ export default function HomePage({
   const [editingField, setEditingField] = useState<'height' | 'weight' | null>(null);
   const [inputValue, setInputValue] = useState<string>('');
 
+  // Water customization state
+  const [waterTarget, setWaterTarget] = useState(2000);
+  const [cupSize, setCupSize] = useState(250);
+  const [editingWaterField, setEditingWaterField] = useState<'target' | 'cup' | null>(null);
+  const [waterInputValue, setWaterInputValue] = useState('');
+
+  // User profile for personalized metabolism calculation
+  const { appUser, userMetrics, weightPredictions } = useAuth();
+  const age = appUser?.age || 30;
+  const gender = appUser?.gender || 'male';
+  const activityLevel = appUser?.activityLevel || 'sedentary';
+
   // Find weight for the selected day
   const selectedWeightEntry = weights.find(w => w.day === selectedDay) || weights[weights.length - 1];
   const selectedWeight = selectedWeightEntry?.weight || 72.5;
@@ -47,18 +61,44 @@ export default function HomePage({
     return sum + meal.items.reduce((mSum, item) => mSum + item.calories, 0);
   }, 0);
 
-  // Today's workout burn + BMR
-  const bmr = 1618;
+  // BMR/TDEE：优先使用数据库触发器计算的值（含热量盈余估重），前端公式兜底
+  const bmr = userMetrics?.bmr ?? calculateBMR(selectedWeight, height, age, gender);
+  const tdee = userMetrics?.tdee ?? calculateTDEE(
+    userMetrics?.bmr ?? calculateBMR(selectedWeight, height, age, gender),
+    activityLevel
+  );
+  // 今日运动消耗
   const todayWorkoutBurn = workouts.reduce((sum, w) => sum + w.calories, 0);
-  const totalBurn = bmr + todayWorkoutBurn;
+  // 总能量消耗 = TDEE + 运动额外消耗
+  const totalBurn = tdee + todayWorkoutBurn;
 
-  // Circular progress for target percentage (say, daily target of 2100 for intake, or 2400 burn)
-  const burnTarget = 2400;
-  const burnPercentage = Math.min(100, Math.round((totalBurn / burnTarget) * 100));
+  // 剩余可摄入 = 总消耗(TDEE+运动) - 今日已摄入
+  // 正值 = 还能吃，负值 = 吃超了
+  const remainingCalories = totalBurn - todayIntake;
+  const overBudget = remainingCalories < 0;
+  // 预算已用百分比（用于圆环进度）
+  const intakePercentage = Math.min(100, Math.round((todayIntake / totalBurn) * 100));
+  // 圆环颜色：剩余 > 0 用主题紫，超预算用红色
+  const gaugeColor = overBudget ? '#EF4444' : '#8B5CF6';
+  const gaugeBgColor = overBudget ? '#FEE2E2' : '#F3EEFF';
 
-  // Water target
-  const waterTarget = 2000;
+  // Water target percentage
   const waterPercentage = Math.min(100, Math.round((waterIntake / waterTarget) * 100));
+
+  const startWaterEdit = (field: 'target' | 'cup', currentValue: number) => {
+    setEditingWaterField(field);
+    setWaterInputValue(String(currentValue));
+  };
+
+  const confirmWaterEdit = (field: 'target' | 'cup') => {
+    const num = Number(waterInputValue);
+    if (!isNaN(num) && num > 0 && num <= 10000) {
+      if (field === 'target') setWaterTarget(num);
+      else if (field === 'cup') setCupSize(num);
+    }
+    setEditingWaterField(null);
+    setWaterInputValue('');
+  };
 
   // Weight trend change calculation
   const startWeight = weights[0]?.weight || 73.5;
@@ -276,15 +316,33 @@ export default function HomePage({
           <div className="bg-white/60 backdrop-blur-sm rounded-xl p-2.5 border border-white/40">
             <span className="text-[10px] text-gray-400 block mb-0.5">预计7天后</span>
             <div className="flex items-baseline gap-1">
-              <span className="text-[18px] font-extrabold text-[#8B5CF6]">-0.85</span>
-              <span className="text-[10px] text-[#8B5CF6] font-medium">kg</span>
+              {weightPredictions ? (
+                <>
+                  <span className="text-[18px] font-extrabold text-[#8B5CF6]">
+                    {(weightPredictions.predicted_weight_7d_jin / 2 - selectedWeight) <= 0 ? '' : '+'}
+                    {(weightPredictions.predicted_weight_7d_jin / 2 - selectedWeight).toFixed(2)}
+                  </span>
+                  <span className="text-[10px] text-[#8B5CF6] font-medium">kg</span>
+                </>
+              ) : (
+                <span className="text-[18px] font-extrabold text-[#8B5CF6]">计算中</span>
+              )}
             </div>
           </div>
           <div className="bg-white/60 backdrop-blur-sm rounded-xl p-2.5 border border-white/40">
             <span className="text-[10px] text-gray-400 block mb-0.5">预计30天后</span>
             <div className="flex items-baseline gap-1">
-              <span className="text-[18px] font-extrabold text-[#8B5CF6]">-3.20</span>
-              <span className="text-[10px] text-[#8B5CF6] font-medium">kg</span>
+              {weightPredictions ? (
+                <>
+                  <span className="text-[18px] font-extrabold text-[#8B5CF6]">
+                    {(weightPredictions.predicted_weight_30d_jin / 2 - selectedWeight) <= 0 ? '' : '+'}
+                    {(weightPredictions.predicted_weight_30d_jin / 2 - selectedWeight).toFixed(2)}
+                  </span>
+                  <span className="text-[10px] text-[#8B5CF6] font-medium">kg</span>
+                </>
+              ) : (
+                <span className="text-[18px] font-extrabold text-[#8B5CF6]">计算中</span>
+              )}
             </div>
           </div>
         </div>
@@ -293,12 +351,12 @@ export default function HomePage({
       {/* Middle Grid: Energy Target & Water Tracker */}
       <div className="grid grid-cols-2 gap-4">
         
-        {/* Burn Target (Circular Progress) */}
+        {/* Calorie Budget (Circular Progress) */}
         <div className="bg-white/70 backdrop-blur-md border border-white/50 rounded-[16px] p-4 shadow-sm flex flex-col justify-between">
           <h3 className="text-[12px] font-semibold text-[#6B7280] mb-3">
-            {selectedDay === '今日' ? '今日' : selectedDay}能量消耗
+            {selectedDay === '今日' ? '今日' : selectedDay}剩余可摄入
           </h3>
-          
+
           <div className="relative flex justify-center items-center py-2">
             {/* SVG Circle Gauge */}
             <svg className="w-28 h-28 transform -rotate-90">
@@ -314,23 +372,27 @@ export default function HomePage({
                 cx="56"
                 cy="56"
                 r="46"
-                className="stroke-[#8B5CF6] transition-all duration-1000 ease-out"
+                stroke={gaugeColor}
                 strokeWidth="8"
                 fill="transparent"
                 strokeDasharray={2 * Math.PI * 46}
-                strokeDashoffset={2 * Math.PI * 46 * (1 - burnPercentage / 100)}
+                strokeDashoffset={2 * Math.PI * 46 * (1 - intakePercentage / 100)}
                 strokeLinecap="round"
+                className="transition-all duration-1000 ease-out"
               />
             </svg>
             <div className="absolute text-center">
-              <span className="text-[20px] font-black text-gray-900 block leading-none">{burnPercentage}%</span>
-              <span className="text-[9px] font-bold text-[#9CA3AF] uppercase tracking-wider mt-1 block">Target</span>
+              <span className={`text-[20px] font-black block leading-none ${overBudget ? 'text-[#EF4444]' : 'text-gray-900'}`}>
+                {remainingCalories > 0 ? remainingCalories : 0}
+              </span>
+              <span className="text-[9px] font-bold text-[#9CA3AF] uppercase tracking-wider mt-1 block">kcal 剩余</span>
             </div>
           </div>
 
           <div className="text-center mt-2">
-            <span className="text-[16px] font-black text-[#8B5CF6]">{totalBurn}</span>
-            <span className="text-[10px] text-gray-400 font-medium ml-1">kcal</span>
+            <span className="text-[11px] font-semibold text-gray-400">
+              已摄入 <span className={`font-extrabold ${overBudget ? 'text-[#EF4444]' : 'text-[#8B5CF6]'}`}>{todayIntake}</span> / {totalBurn} kcal
+            </span>
           </div>
         </div>
 
@@ -338,39 +400,82 @@ export default function HomePage({
         <div className="bg-white/70 backdrop-blur-md border border-white/50 rounded-[16px] p-4 shadow-sm flex flex-col justify-between">
           <div>
             <h3 className="text-[12px] font-semibold text-[#6B7280] mb-2">
-              {selectedDay === '今日' ? '' : selectedDay}水分摄入
+              水分摄入
             </h3>
             <div className="flex items-center gap-1.5 text-[#8B5CF6] mb-2">
               <Droplet size={18} fill="#8B5CF6" />
               <span className="text-[20px] font-black">{waterIntake}</span>
               <span className="text-[11px] text-gray-400 font-medium">ml</span>
             </div>
-            
+
             {/* Progress Bar */}
             <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden mb-1">
-              <div 
+              <div
                 className="h-full bg-[#8B5CF6] transition-all duration-300"
                 style={{ width: `${waterPercentage}%` }}
               />
             </div>
-            <span className="text-[10px] text-gray-400 block">目标 {waterTarget}ml</span>
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-gray-400">目标</span>
+              {editingWaterField === 'target' ? (
+                <input
+                  autoFocus
+                  type="number"
+                  value={waterInputValue}
+                  onChange={(e) => setWaterInputValue(e.target.value)}
+                  onBlur={() => confirmWaterEdit('target')}
+                  onKeyDown={(e) => { if (e.key === 'Enter') confirmWaterEdit('target'); }}
+                  className="text-[10px] font-bold text-[#8B5CF6] w-14 bg-transparent border-b border-[#8B5CF6] outline-none text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                />
+              ) : (
+                <span
+                  className="text-[10px] font-bold text-gray-500 cursor-pointer hover:text-[#8B5CF6] transition-colors border-b border-dashed border-gray-300 hover:border-[#8B5CF6]"
+                  onClick={() => startWaterEdit('target', waterTarget)}
+                >
+                  {waterTarget}
+                </span>
+              )}
+              <span className="text-[10px] text-gray-400">ml</span>
+            </div>
           </div>
 
           <div className="flex flex-col items-center justify-center gap-1.5 mt-3 w-full">
-            <button
-              id="drink-water-btn"
-              onClick={onAddWater}
-              className="w-full bg-[#E0F2FE] hover:bg-[#BAE6FD] text-[#0369A1] font-bold text-xs py-2 rounded-full flex items-center justify-center gap-1 transition-all active:scale-95 shadow-sm"
-            >
-              记一杯 (+250ml)
-            </button>
+            {editingWaterField === 'cup' ? (
+              <div className="w-full flex items-center justify-center gap-1 bg-[#E0F2FE] rounded-full py-2 px-3">
+                <input
+                  autoFocus
+                  type="number"
+                  value={waterInputValue}
+                  onChange={(e) => setWaterInputValue(e.target.value)}
+                  onBlur={() => confirmWaterEdit('cup')}
+                  onKeyDown={(e) => { if (e.key === 'Enter') confirmWaterEdit('cup'); }}
+                  className="text-xs font-bold text-[#0369A1] w-14 bg-transparent border-b border-[#0369A1]/40 outline-none text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  placeholder="250"
+                />
+                <span className="text-[10px] text-[#0369A1]/60 font-medium">ml/杯</span>
+              </div>
+            ) : (
+              <button
+                id="drink-water-btn"
+                onClick={() => onAddWater(cupSize)}
+                className="w-full bg-[#E0F2FE] hover:bg-[#BAE6FD] text-[#0369A1] font-bold text-xs py-2 rounded-full flex items-center justify-center gap-1 transition-all active:scale-95 shadow-sm"
+              >
+                记一杯 (+{cupSize}ml)
+              </button>
+            )}
             <button
               id="minus-water-btn"
-              onClick={onSubtractWater}
+              onClick={() => onSubtractWater(cupSize)}
               className="w-full bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs py-2 rounded-full flex items-center justify-center gap-1 transition-all active:scale-95 shadow-sm"
             >
-              减一杯 (-250ml)
+              减一杯 (-{cupSize}ml)
             </button>
+            <span
+              className="text-[10px] text-gray-400 cursor-pointer hover:text-[#8B5CF6] transition-colors border-b border-dashed border-gray-300 hover:border-[#8B5CF6]"
+              onClick={() => startWaterEdit('cup', cupSize)}
+            >
+              修改杯量
+            </span>
           </div>
         </div>
       </div>

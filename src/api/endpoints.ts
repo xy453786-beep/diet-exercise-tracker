@@ -1,5 +1,7 @@
 import { supabase } from './client';
-import type { MealRecord, MealItem, MealCategory, WorkoutItem, WeightEntry, AIDietAnalysis } from '../types';
+import type { MealRecord, MealItem, MealCategory, WorkoutItem, WeightEntry, AIDietAnalysis, FoodCompositionResult, FoodAnalyzeResult } from '../types';
+
+const API_BASE = import.meta.env.VITE_API_URL || '';
 
 // Cached user ID — use getSession() (local, no network) to avoid API call per operation
 let _cachedUserId: string | null = null;
@@ -32,12 +34,15 @@ const MEAL_META: Record<string, { name: string; icon: string }> = {
 
 // ==================== Auth / Profile ====================
 
-export async function getProfile(): Promise<{ id: string; username: string; avatarUrl: string; height: number; weight: number | null }> {
+export async function getProfile(): Promise<{
+  id: string; username: string; avatarUrl: string; height: number; weight: number | null;
+  gender?: 'male' | 'female'; age?: number; activityLevel?: string; hasCompletedSurvey?: boolean;
+}> {
   const userId = await getUserId();
 
   const { data: profile, error } = await supabase
     .from('profiles')
-    .select('id, username, avatar_url, height')
+    .select('id, username, avatar_url, height, gender, age, activity_level, has_completed_survey')
     .eq('id', userId)
     .single();
 
@@ -58,6 +63,10 @@ export async function getProfile(): Promise<{ id: string; username: string; avat
     avatarUrl: profile.avatar_url,
     height: profile.height || 178,
     weight: latestWeight?.weight || null,
+    gender: profile.gender || undefined,
+    age: profile.age || undefined,
+    activityLevel: profile.activity_level || undefined,
+    hasCompletedSurvey: profile.has_completed_survey || false,
   };
 }
 
@@ -65,12 +74,20 @@ export async function updateProfile(data: {
   username?: string;
   avatarUrl?: string;
   height?: number;
+  gender?: string;
+  age?: number;
+  activityLevel?: string;
+  hasCompletedSurvey?: boolean;
 }): Promise<void> {
   const userId = await getUserId();
   const updates: Record<string, any> = { updated_at: new Date().toISOString() };
   if (data.username !== undefined) updates.username = data.username;
   if (data.avatarUrl !== undefined) updates.avatar_url = data.avatarUrl;
   if (data.height !== undefined) updates.height = data.height;
+  if (data.gender !== undefined) updates.gender = data.gender;
+  if (data.age !== undefined) updates.age = data.age;
+  if (data.activityLevel !== undefined) updates.activity_level = data.activityLevel;
+  if (data.hasCompletedSurvey !== undefined) updates.has_completed_survey = data.hasCompletedSurvey;
 
   const { error } = await supabase
     .from('profiles')
@@ -373,7 +390,62 @@ export async function setWater(date: string, amount: number, mode: 'set' | 'add'
   }
 }
 
-// ==================== AI Analyses ====================
+// ==================== User Metrics (动态 BMR/TDEE) ====================
+
+export interface UserMetrics {
+  user_id: string;
+  current_weight: number;
+  bmr: number;
+  tdee: number;
+  updated_at: string;
+}
+
+/** 读取数据库计算的最新 BMR/TDEE */
+export async function getUserMetrics(): Promise<UserMetrics | null> {
+  const userId = await getUserId();
+  const { data } = await supabase
+    .from('user_metrics')
+    .select('user_id, current_weight, bmr, tdee, updated_at')
+    .eq('user_id', userId)
+    .maybeSingle();
+  return data;
+}
+
+/** 手动触发后端重算 BMR/TDEE（首次加载或数据同步后调用） */
+export async function recalculateMetrics(): Promise<void> {
+  const userId = await getUserId();
+  const { error } = await supabase.rpc('update_metrics_for_user', { p_user_id: userId });
+  if (error) console.error('重算 metrics 失败:', error);
+}
+
+// ==================== Weight Predictions（体重预测） ====================
+
+export interface WeightPrediction {
+  user_id: string;
+  predicted_weight_7d_jin: number;
+  predicted_weight_30d_jin: number;
+  base_weight_kg: number;
+  avg_daily_surplus: number;
+  updated_at: string;
+}
+
+/** 读取数据库计算的最新体重预测 */
+export async function getWeightPredictions(): Promise<WeightPrediction | null> {
+  const userId = await getUserId();
+  const { data } = await supabase
+    .from('weight_predictions')
+    .select('user_id, predicted_weight_7d_jin, predicted_weight_30d_jin, base_weight_kg, avg_daily_surplus, updated_at')
+    .eq('user_id', userId)
+    .maybeSingle();
+  return data;
+}
+
+/** 手动触发后端重算体重预测 */
+export async function recalculatePredictions(): Promise<void> {
+  const userId = await getUserId();
+  const { error } = await supabase.rpc('update_weight_prediction', { p_user_id: userId });
+  if (error) console.error('重算预测失败:', error);
+}
 
 export async function saveAnalysis(analysis: AIDietAnalysis): Promise<{ id: string }> {
   const userId = await getUserId();
@@ -398,4 +470,53 @@ export async function getRecentAnalyses(limit = 10): Promise<AIDietAnalysis[]> {
 
   if (error) throw new Error('查询分析记录失败');
   return (data || []).map((r) => r.analysis_data);
+}
+
+// ==================== Food Composition Search & Analyze ====================
+
+/** 获取认证 Header（供 Express API 调用） */
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/**
+ * 搜索食物成分表（RAG 检索）。
+ * 调用 Express 后端 /api/food/search
+ */
+export async function searchFood(query: string, limit = 5): Promise<FoodCompositionResult[]> {
+  const res = await fetch(
+    `${API_BASE}/api/food/search?q=${encodeURIComponent(query)}&limit=${limit}`
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || '食物搜索失败');
+  }
+  const data = await res.json();
+  return data.results || [];
+}
+
+/**
+ * 食物营养分析：AI 识别 + 食物成分表查询 + 联网搜索。
+ * 调用 Express 后端 /api/food/analyze
+ */
+export async function analyzeFood(
+  foodName: string,
+  weight?: number
+): Promise<FoodAnalyzeResult> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(await getAuthHeaders()),
+  };
+  const res = await fetch(`${API_BASE}/api/food/analyze`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ foodName, weight }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || '食物分析失败');
+  }
+  return res.json();
 }

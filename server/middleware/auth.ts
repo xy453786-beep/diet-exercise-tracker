@@ -38,33 +38,3 @@ export async function requireAuth(
     res.status(401).json({ error: '认证验证失败' });
   }
 }
-
-/**
- * Optional auth middleware: sets req.userId if a valid token is present,
- * but does not reject unauthenticated requests.
- */
-export async function optionalAuth(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    next();
-    return;
-  }
-
-  const token = authHeader.split(' ')[1];
-
-  try {
-    const { data } = await supabaseAdmin.auth.getUser(token);
-    if (data.user) {
-      req.userId = data.user.id;
-    }
-  } catch {
-    // Silently ignore invalid tokens in optional mode
-  }
-
-  next();
-}
