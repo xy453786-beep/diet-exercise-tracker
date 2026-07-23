@@ -1,0 +1,21 @@
+services:
+  # ============================================
+  # 后端 API 服务 (Express + TypeScript)
+  # ============================================
+  - type: web
+    name: diet-tracker-api
+    env: node
+    region: singapore
+    plan: free
+    branch: master
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: "3001"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: DASHSCOPE_API_KEY
+        sync: false
