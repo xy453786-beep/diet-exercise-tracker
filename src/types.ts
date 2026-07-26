@@ -1,4 +1,4 @@
-export type PageType = 'home' | 'diet' | 'exercise' | 'analysis' | 'ai-result' | 'login';
+export type PageType = 'home' | 'diet' | 'exercise' | 'analysis' | 'ai-result';
 
 export interface User {
   username: string;

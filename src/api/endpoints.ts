@@ -16,9 +16,17 @@ async function getUserId(): Promise<string> {
   }
   // Fallback: verify with server
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('未登录');
-  _cachedUserId = user.id;
-  return _cachedUserId;
+  if (user?.id) {
+    _cachedUserId = user.id;
+    return _cachedUserId;
+  }
+  // Fallback: 本地离线模式（无 Supabase 会话时）
+  const localId = localStorage.getItem('local_user_id');
+  if (localId) {
+    _cachedUserId = localId;
+    return _cachedUserId;
+  }
+  throw new Error('未登录');
 }
 
 // Clear cache on logout (called from AuthContext)

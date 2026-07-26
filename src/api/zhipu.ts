@@ -57,13 +57,15 @@ export async function analyzeFoodImageBackend(
 ): Promise<ZhipuFoodAnalysis> {
   const API_BASE = (import.meta as any).env?.VITE_API_URL || '';
 
-  // Step 1: 上传图片到 Supabase Storage
-  const imageUrl = await uploadImageToStorage(imageDataUrl);
-
-  // Step 2: 获取认证 Token
+  // Step 1: 检查是否已认证（匿名登录或常规登录）
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
-  if (!token) throw new Error('未登录，请先登录');
+  if (!token) {
+    throw new Error('当前为离线模式，AI 扫描需要联网。请确保 Supabase 开启了匿名登录。');
+  }
+
+  // Step 2: 上传图片到 Supabase Storage
+  const imageUrl = await uploadImageToStorage(imageDataUrl);
 
   // Step 3: 调用后端分析接口（15s 超时以适应联网搜索）
   const controller = new AbortController();
@@ -131,7 +133,10 @@ export async function saveFoodCorrection(data: {
   const API_BASE = (import.meta as any).env?.VITE_API_URL || '';
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
-  if (!token) throw new Error('未登录');
+  if (!token) {
+    console.warn('离线模式，跳过保存校正数据');
+    return;
+  }
 
   const response = await fetch(`${API_BASE}/api/food/cache/correct`, {
     method: 'POST',

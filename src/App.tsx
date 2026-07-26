@@ -5,7 +5,6 @@ import { INITIAL_WEIGHTS, INITIAL_MEALS_BY_DAY, INITIAL_WORKOUTS_BY_DAY, MOCK_AI
 import { useAuth } from './context/AuthContext';
 import { dayLabelToDate, dateToDayLabel, getCurrentWeekRange } from './utils/dates';
 import * as endpoints from './api/endpoints';
-import LoginPage from './components/LoginPage';
 import OnboardingPage from './components/OnboardingPage';
 import { Camera } from 'lucide-react';
 import { analyzeFoodImageBackend, type ZhipuFoodAnalysis } from './api/zhipu';
@@ -38,7 +37,7 @@ function mapDateKeysToLabels<T>(dataByDate: Record<string, T>): Record<string, T
 
 export default function App() {
   // ---- Auth ----
-  const { appUser: user, loading: authLoading, signOut, updateAppUser } = useAuth();
+  const { appUser: user, loading: authLoading, updateAppUser } = useAuth();
 
   // ---- Page Routing ----
   const [currentPage, setCurrentPage] = useState<PageType>('home');
@@ -162,19 +161,10 @@ export default function App() {
   useEffect(() => {
     if (user) {
       loadAllData();
-      // Reset to home page after login (handleLogout sets it to 'login')
-      if (currentPage === 'login') {
-        setCurrentPage('home');
-      }
     }
   }, [user, loadAllData]);
 
   // ---- Handlers (API-backed) ----
-
-  const handleLogout = async () => {
-    await signOut();
-    setCurrentPage('login');
-  };
 
   const handleUpdateHeight = async (newHeight: number) => {
     await updateAppUser({ height: newHeight });
@@ -388,15 +378,7 @@ export default function App() {
 
   // Decide what to render inside the mobile viewport
   const renderContent = () => {
-    if (!user) {
-      return (
-        <div className="flex-1 overflow-y-auto scrollbar-none">
-          <LoginPage />
-        </div>
-      );
-    }
-
-    if (!user.hasCompletedSurvey) {
+    if (!user?.hasCompletedSurvey) {
       return (
         <div className="flex-1 overflow-y-auto scrollbar-none">
           <OnboardingPage />
@@ -419,14 +401,13 @@ export default function App() {
         id="mobile-viewport"
         className="w-full sm:w-[360px] md:w-[375px] max-w-[390px] sm:h-[740px] md:h-[760px] max-h-full h-screen glass-panel sm:rounded-[40px] sm:shadow-[0_32px_64px_rgba(139,92,246,0.18)] border-0 sm:border-4 sm:border-white/50 flex flex-col relative overflow-hidden transition-all duration-300"
       >
-        {user && user.hasCompletedSurvey ? (
+        {user?.hasCompletedSurvey ? (
           <>
             {/* Persistent Header */}
             <Header
               title={getHeaderTitle(currentPage)}
               avatarUrl={user.avatarUrl}
               username={user.username}
-              onLogout={handleLogout}
             />
 
             {/* Data loading indicator */}

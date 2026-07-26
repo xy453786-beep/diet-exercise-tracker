@@ -1,24 +1,21 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../api/client';
 import type { User as AppUser } from '../types';
-import type { Session } from '@supabase/supabase-js';
 import * as profileApi from '../api/endpoints';
 import { clearUserIdCache } from '../api/endpoints';
 import type { UserMetrics, WeightPrediction } from '../api/endpoints';
 
 interface AuthState {
   appUser: (AppUser & { id: string }) | null;
-  session: Session | null;
   loading: boolean;
   userMetrics: UserMetrics | null;
   weightPredictions: WeightPrediction | null;
 }
 
 interface AuthContextType extends AuthState {
-  signUp: (email: string, password: string, username: string) => Promise<void>;
-  signIn: (email: string, password: string) => Promise<void>;
-  signOut: () => Promise<void>;
   updateAppUser: (data: Partial<AppUser>) => Promise<void>;
+  /** 重载所有数据（匿名登录完成后调用） */
+  reloadProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -26,7 +23,6 @@ const AuthContext = createContext<AuthContextType | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({
     appUser: null,
-    session: null,
     loading: true,
     userMetrics: null,
     weightPredictions: null,
@@ -36,8 +32,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const metricsChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const predictionsChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
-  // Fetch profile + metrics from backend
-  const fetchProfile = useCallback(async (session: Session) => {
+  /** 清理所有 Realtime 订阅 */
+  const cleanupChannels = useCallback(() => {
+    if (metricsChannelRef.current) {
+      supabase.removeChannel(metricsChannelRef.current);
+      metricsChannelRef.current = null;
+    }
+    if (predictionsChannelRef.current) {
+      supabase.removeChannel(predictionsChannelRef.current);
+      predictionsChannelRef.current = null;
+    }
+  }, []);
+
+  /** 从 Supabase 拉取用户信息 + 指标数据 */
+  const fetchProfile = useCallback(async () => {
     try {
       const profile = await profileApi.getProfile();
       const userId = profile.id;
@@ -46,7 +54,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       let metrics: UserMetrics | null = null;
       try {
         metrics = await profileApi.getUserMetrics();
-        // 如果还没有 metrics（新用户），触发首次计算
         if (!metrics) {
           await profileApi.recalculateMetrics();
           metrics = await profileApi.getUserMetrics();
@@ -59,7 +66,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       let predictions: WeightPrediction | null = null;
       try {
         predictions = await profileApi.getWeightPredictions();
-        // 如果还没有预测（新用户），触发首次计算
         if (!predictions) {
           await profileApi.recalculatePredictions();
           predictions = await profileApi.getWeightPredictions();
@@ -80,7 +86,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           activityLevel: profile.activityLevel as any,
           hasCompletedSurvey: profile.hasCompletedSurvey,
         },
-        session,
         loading: false,
         userMetrics: metrics,
         weightPredictions: predictions,
@@ -137,105 +142,96 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (err) {
       console.error('Failed to fetch profile:', err);
-      setState({ appUser: null, session, loading: false, userMetrics: null, weightPredictions: null });
+      // 如果 Supabase 查询失败（例如 RLS 对匿名用户未开放），回退到本地用户
+      createLocalUser();
     }
   }, []);
 
-  // Listen for auth state changes
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        fetchProfile(session);
-      } else {
-        setState({ appUser: null, session: null, loading: false, userMetrics: null, weightPredictions: null });
-      }
-    });
+  /** 创建本地离线用户（匿名登录失败或 Supabase 不可用时） */
+  const createLocalUser = useCallback(() => {
+    cleanupChannels();
+    const stored = localStorage.getItem('local_user_data');
+    let localData: Record<string, any> = {};
+    try { localData = stored ? JSON.parse(stored) : {}; } catch {}
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (session) {
-        fetchProfile(session);
-      } else {
-        // 清理 Realtime 订阅
-        if (metricsChannelRef.current) {
-          supabase.removeChannel(metricsChannelRef.current);
-          metricsChannelRef.current = null;
-        }
-        if (predictionsChannelRef.current) {
-          supabase.removeChannel(predictionsChannelRef.current);
-          predictionsChannelRef.current = null;
-        }
-        setState({ appUser: null, session: null, loading: false, userMetrics: null, weightPredictions: null });
-      }
+    const localId = localStorage.getItem('local_user_id') || crypto.randomUUID();
+    localStorage.setItem('local_user_id', localId);
+
+    setState({
+      appUser: {
+        id: localId,
+        username: localData.username || '访客',
+        avatarUrl: localData.avatarUrl || '',
+        height: localData.height || 175,
+        weight: localData.weight || null,
+        gender: localData.gender || undefined,
+        age: localData.age || undefined,
+        activityLevel: localData.activityLevel || undefined,
+        hasCompletedSurvey: localData.hasCompletedSurvey || false,
+      },
+      loading: false,
+      userMetrics: null,
+      weightPredictions: null,
     });
+  }, [cleanupChannels]);
+
+  /** 初始化：自动匿名登录 */
+  const initAuth = useCallback(async () => {
+    try {
+      // 先检查是否有已有会话
+      const { data: sessionData } = await supabase.auth.getSession();
+
+      if (sessionData.session) {
+        // 已有会话，直接加载数据
+        await fetchProfile();
+        return;
+      }
+
+      // 尝试匿名登录
+      const { data, error } = await supabase.auth.signInAnonymously();
+      if (error || !data.session) {
+        console.warn('匿名登录不可用，使用本地模式:', error?.message);
+        createLocalUser();
+        return;
+      }
+
+      // 匿名登录成功，加载数据
+      console.log('[Auth] 匿名登录成功');
+      await fetchProfile();
+    } catch (err: any) {
+      console.warn('初始化认证失败，使用本地模式:', err?.message);
+      createLocalUser();
+    }
+  }, [fetchProfile, createLocalUser]);
+
+  useEffect(() => {
+    initAuth();
 
     return () => {
-      subscription.unsubscribe();
-      if (metricsChannelRef.current) {
-        supabase.removeChannel(metricsChannelRef.current);
-        metricsChannelRef.current = null;
-      }
-      if (predictionsChannelRef.current) {
-        supabase.removeChannel(predictionsChannelRef.current);
-        predictionsChannelRef.current = null;
-      }
+      cleanupChannels();
     };
+  }, [initAuth, cleanupChannels]);
+
+  const reloadProfile = useCallback(async () => {
+    setState((prev) => ({ ...prev, loading: true }));
+    await fetchProfile();
   }, [fetchProfile]);
 
-  const signUp = useCallback(async (email: string, password: string, username: string) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { username },
-      },
-    });
-    if (error) throw error;
-
-    // If signUp didn't return a session (email confirmation required),
-    // try signing in immediately — works if the project has confirm disabled
-    if (!data.session) {
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (signInError) {
-        // Email confirmation is still required
-        throw new Error('请前往 Supabase 后台关闭邮箱确认（Authentication > Settings > Email > Confirm email）');
-      }
-    }
-  }, []);
-
-  const signIn = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (error) throw error;
-  }, []);
-
-  const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
-    clearUserIdCache();
-    if (metricsChannelRef.current) {
-      supabase.removeChannel(metricsChannelRef.current);
-      metricsChannelRef.current = null;
-    }
-    if (predictionsChannelRef.current) {
-      supabase.removeChannel(predictionsChannelRef.current);
-      predictionsChannelRef.current = null;
-    }
-    setState({ appUser: null, session: null, loading: false, userMetrics: null, weightPredictions: null });
-  }, []);
-
   const updateAppUser = useCallback(async (data: Partial<AppUser>) => {
-    // Optimistic update: 先改 UI，让用户不会卡住
+    // Optimistic update: 先改 UI
     setState((prev) => ({
       ...prev,
       appUser: prev.appUser ? { ...prev.appUser, ...data } : null,
     }));
-    // 后台持久化，失败也不阻塞
+
+    // 如果是本地模式，存到 localStorage
+    const session = await supabase.auth.getSession();
+    if (!session.data.session) {
+      const stored = JSON.parse(localStorage.getItem('local_user_data') || '{}');
+      localStorage.setItem('local_user_data', JSON.stringify({ ...stored, ...data }));
+    }
+
+    // 后台持久化到 Supabase，失败不阻塞
     try {
       await profileApi.updateProfile(data);
     } catch (err) {
@@ -247,10 +243,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     <AuthContext.Provider
       value={{
         ...state,
-        signUp,
-        signIn,
-        signOut,
         updateAppUser,
+        reloadProfile,
       }}
     >
       {children}
