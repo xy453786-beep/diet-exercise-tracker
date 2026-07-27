@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, optionalAuth } from '../middleware/auth.js';
 import { runPipeline, analyzeFoodByName } from '../services/food/pipeline.js';
 import { saveUserCorrection } from '../services/food/sources/cache.js';
 
@@ -87,7 +87,7 @@ foodRouter.post('/cache/correct', requireAuth, async (req: Request, res: Respons
 //
 // Body: { foodName: string, weight?: number }
 // ============================================================
-foodRouter.post('/analyze', requireAuth, async (req: Request, res: Response) => {
+foodRouter.post('/analyze', optionalAuth, async (req: Request, res: Response) => {
   try {
     const { foodName, weight } = req.body;
 
