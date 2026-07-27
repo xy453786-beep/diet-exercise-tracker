@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Plus, Minus, Trash2, Sparkles, Scale, Utensils, Loader2, Database } from 'lucide-react';
 import { AIDietAnalysis, MealCategory } from '../types';
 import type { ZhipuFoodAnalysis } from '../api/zhipu';
@@ -69,11 +69,19 @@ export default function AIScanEditModal({
   const [editingCalories, setEditingCalories] = useState(false);
   const [manualCalories, setManualCalories] = useState<number | null>(null);
   const [isRecalculating, setIsRecalculating] = useState(false);
+
+  // 追踪组件是否已卸载，防止异步回调中 setState 导致 DOM 报错
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    return () => { mountedRef.current = false; };
+  }, []);
+
   const handleRecalculate = async () => {
     if (!mealName.trim() || isRecalculating) return;
     setIsRecalculating(true);
     try {
       const result = await analyzeFood(mealName.trim(), 100);
+      if (!mountedRef.current) return;
       setIngredients([{
         id: `ing-ai-${Date.now()}`,
         name: mealName.trim(),
@@ -87,7 +95,7 @@ export default function AIScanEditModal({
     } catch {
       // Keep existing data on failure
     } finally {
-      setIsRecalculating(false);
+      if (mountedRef.current) setIsRecalculating(false);
     }
   };
 

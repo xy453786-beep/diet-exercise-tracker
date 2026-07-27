@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth } from '../middleware/auth.js';
-import { runPipeline } from '../services/food/pipeline.js';
+import { runPipeline, analyzeFoodByName } from '../services/food/pipeline.js';
 import { saveUserCorrection } from '../services/food/sources/cache.js';
 
 export const foodRouter = Router();
@@ -76,5 +76,33 @@ foodRouter.post('/cache/correct', requireAuth, async (req: Request, res: Respons
   } catch (err: any) {
     console.error('[food/cache/correct] 错误:', err);
     res.status(500).json({ error: '保存校正数据失败' });
+  }
+});
+
+// ============================================================
+// POST /api/food/analyze
+//
+// 文本食物营养分析（纯文字，无需图片）：
+//   缓存 → 食物成分表 → 联网搜索（零食）→ 兜底估算
+//
+// Body: { foodName: string, weight?: number }
+// ============================================================
+foodRouter.post('/analyze', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { foodName, weight } = req.body;
+
+    if (!foodName || typeof foodName !== 'string' || !foodName.trim()) {
+      res.status(400).json({ error: '请提供食物名称' });
+      return;
+    }
+
+    console.log(`[food/analyze] 文本分析: "${foodName}" ${weight || 100}g`);
+    const result = await analyzeFoodByName(foodName.trim(), weight || 100);
+    console.log(`[food/analyze] 完成: source=${result.source} calories=${result.nutrition.calories}kcal`);
+
+    res.json(result);
+  } catch (err: any) {
+    console.error('[food/analyze] 错误:', err);
+    res.status(500).json({ error: '食物分析失败，请重试' });
   }
 });

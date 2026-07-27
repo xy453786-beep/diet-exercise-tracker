@@ -444,8 +444,126 @@ function emptyResult(message: string): AnalysisResult {
   };
 }
 
+/**
+ * 文本食物分析：纯文本食物名称 → 营养数据
+ * 跳过条码扫描和图片识别，直接从 lookup 管线走
+ */
+export async function analyzeFoodByName(
+  foodName: string,
+  weight: number = 100
+): Promise<{
+  foodName: string;
+  matchedFood: string | null;
+  category: string | null;
+  weight: number;
+  source: 'database' | 'ai_estimated' | 'database_fallback';
+  nutrition: { calories: number; protein: number; carbs: number; fat: number };
+  per100g: { calories: number; protein: number; carbs: number; fat: number } | null;
+  suggestion: string | null;
+  exercise: string | null;
+}> {
+  // ── Stage 2: 查缓存 ──
+  const cached = await lookupSnackCache(foodName);
+  if (cached && cached.energy_kcal > 0) {
+    const kcal = cached.energy_kcal;
+    const grams = cached.net_weight_g || weight;
+    const per100gCalories = cached.per100g?.calories || Math.round(kcal / grams * 100);
+    return {
+      foodName: cached.food_name,
+      matchedFood: cached.food_name,
+      category: classifyFoodSimple(cached.food_name),
+      weight: grams,
+      source: 'database',
+      nutrition: { calories: kcal, protein: cached.protein_g, carbs: cached.carbs_g, fat: cached.fat_g },
+      per100g: { calories: per100gCalories, protein: cached.protein_g / grams * 100, carbs: cached.carbs_g / grams * 100, fat: cached.fat_g / grams * 100 },
+      suggestion: `缓存数据：「${cached.food_name}」${grams}g，约${kcal}kcal`,
+      exercise: kcal > 0 ? `约需慢跑 ${Math.round(kcal / 6)} 分钟消耗此热量` : null,
+    };
+  }
+
+  // ── Stage 3: 查食物成分表 ──
+  const { portionG: defaultPortion, fallbackKcalPer100g } = getDefaultPortion(foodName);
+  let sourceResult: SourceResult | null = null;
+
+  try {
+    const comp = await lookupFoodComposition(foodName);
+    if (comp) {
+      const ratio = (weight || defaultPortion) / 100;
+      const kcal = Math.round(comp.energy_kcal * ratio);
+      sourceResult = {
+        food_name: comp.food_name,
+        brand: null, barcode: null,
+        net_weight_g: weight || defaultPortion,
+        energy_kcal: kcal,
+        protein_g: parseFloat((comp.protein * ratio).toFixed(1)),
+        carbs_g: parseFloat((comp.carbs * ratio).toFixed(1)),
+        fat_g: parseFloat((comp.fat * ratio).toFixed(1)),
+        per100g: { calories: comp.energy_kcal, protein: comp.protein, carbs: comp.carbs, fat: comp.fat },
+        source: 'food_composition',
+        confidence: 'high',
+        suggestion: `「${comp.food_name}」每100g约${comp.energy_kcal}kcal，${weight || defaultPortion}g约${kcal}kcal（数据来源：中国食物成分表）`,
+      };
+    }
+  } catch { /* fall through */ }
+
+  // ── Stage 4: 联网搜索（仅零食） ──
+  if (!sourceResult && isSnackFood(foodName)) {
+    try {
+      const snackResult = await searchSnackNutrition(foodName);
+      if (snackResult) {
+        const grams = snackResult.package_weight_g || weight;
+        const kcal = Math.round(grams * snackResult.kcal_per_100g / 100);
+        sourceResult = {
+          food_name: foodName, brand: null, barcode: null,
+          net_weight_g: grams, energy_kcal: kcal,
+          protein_g: 0, carbs_g: 0, fat_g: 0,
+          per100g: { calories: snackResult.kcal_per_100g, protein: 0, carbs: 0, fat: 0 },
+          source: 'snack_search',
+          confidence: snackResult.confidence === 'high' ? 'high' : 'medium',
+          suggestion: snackResult.suggestion || `AI 联网查询到「${foodName}」${grams}g × ${snackResult.kcal_per_100g}kcal/100g = ${kcal}kcal`,
+        };
+      }
+    } catch { /* fall through */ }
+  }
+
+  // ── Stage 5: 兜底 ──
+  if (!sourceResult) {
+    const grams = weight || defaultPortion;
+    const kcal = Math.round(grams * fallbackKcalPer100g / 100);
+    sourceResult = {
+      food_name: foodName, brand: null, barcode: null,
+      net_weight_g: grams, energy_kcal: kcal,
+      protein_g: 0, carbs_g: 0, fat_g: 0,
+      per100g: { calories: fallbackKcalPer100g, protein: 0, carbs: 0, fat: 0 },
+      source: 'food_composition',
+      confidence: 'low',
+      suggestion: `未在数据库中找到「${foodName}」，使用估算值 ${kcal}kcal（${grams}g × ${fallbackKcalPer100g}kcal/100g）`,
+    };
+  }
+
+  // 缓存结果
+  await saveToCache(sourceResult).catch(() => {});
+
+  const grams = sourceResult.net_weight_g;
+  const kcal = sourceResult.energy_kcal;
+  const src: 'database' | 'ai_estimated' = sourceResult.confidence === 'high' ? 'database' : 'ai_estimated';
+  const exercise = kcal > 0 ? `约需慢跑 ${Math.round(kcal / 6)} 分钟消耗此热量` : null;
+
+  return {
+    foodName: sourceResult.food_name,
+    matchedFood: sourceResult.food_name,
+    category: classifyFoodSimple(sourceResult.food_name),
+    weight: grams,
+    source: src,
+    nutrition: { calories: kcal, protein: sourceResult.protein_g, carbs: sourceResult.carbs_g, fat: sourceResult.fat_g },
+    per100g: sourceResult.per100g,
+    suggestion: sourceResult.suggestion,
+    exercise,
+  };
+}
+
 /** 简单食物分类（关键词匹配） */
-function classifyFoodSimple(foodName: string): string {
+export function classifyFoodSimple(foodName: string): string {
   const patterns: [RegExp, string][] = [
     [/面|粉|拉面|拌面|意面|凉皮/i, '面食'],
     [/饭|米|粥|盖浇|炒饭|焗饭|煲仔/i, '米饭'],
