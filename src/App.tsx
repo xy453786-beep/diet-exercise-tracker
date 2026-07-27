@@ -37,7 +37,7 @@ function mapDateKeysToLabels<T>(dataByDate: Record<string, T>): Record<string, T
 
 export default function App() {
   // ---- Auth ----
-  const { appUser: user, loading: authLoading, updateAppUser } = useAuth();
+  const { appUser: user, loading: authLoading } = useAuth();
 
   // ---- Page Routing ----
   const [currentPage, setCurrentPage] = useState<PageType>('home');
@@ -165,10 +165,6 @@ export default function App() {
   }, [user, loadAllData]);
 
   // ---- Handlers (API-backed) ----
-
-  const handleUpdateHeight = async (newHeight: number) => {
-    await updateAppUser({ height: newHeight });
-  };
 
   const handleUpdateLatestWeight = async (newWeight: number) => {
     const date = dayLabelToDate(selectedDay);
@@ -448,11 +444,11 @@ export default function App() {
                       onAddWater={handleAddWater}
                       onSubtractWater={handleSubtractWater}
                       onNavigateToAI={() => setCurrentPage('ai-result')}
+                      onOpenFoodScanner={(category) => setFoodChoiceCategory(category || 'lunch')}
+                      onOpenAddWorkout={() => setIsAddWorkoutOpen(true)}
                       height={height}
-                      onUpdateHeight={handleUpdateHeight}
                       onUpdateLatestWeight={handleUpdateLatestWeight}
                       selectedDay={selectedDay}
-                      onSelectDay={setSelectedDay}
                     />
                   )}
 

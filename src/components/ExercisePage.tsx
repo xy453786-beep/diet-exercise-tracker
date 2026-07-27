@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Plus, Timer, Heart, Activity, Flame, Trash2, Calendar, ChevronDown } from 'lucide-react';
+import React, { useState, useMemo, useRef, useLayoutEffect } from 'react';
+import { Plus, Timer, Heart, Activity, Flame, Trash2, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { WorkoutItem } from '../types';
 
 interface ExercisePageProps {
@@ -10,6 +10,46 @@ interface ExercisePageProps {
   onRemoveWorkout: (id: string) => void;
 }
 
+const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'] as const;
+
+/** Get Monday of the week containing the given date */
+function getMonday(d: Date): Date {
+  const day = d.getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + offset);
+  monday.setHours(0, 0, 0, 0);
+  return monday;
+}
+
+function toISODate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+
+function formatDateLabel(d: Date): string {
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
+function isSameDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+/** Get the Chinese day label for a given date, or null if outside current week */
+function dateToLabel(d: Date): string | null {
+  const today = new Date();
+  if (isSameDay(d, today)) return '今日';
+  const monday = getMonday(today);
+  for (let i = 0; i < 7; i++) {
+    const day = new Date(monday);
+    day.setDate(monday.getDate() + i);
+    if (isSameDay(d, day)) return WEEKDAYS[i];
+  }
+  return null;
+}
+
 export default function ExercisePage({
   workoutsByDay,
   selectedDay,
@@ -17,252 +57,364 @@ export default function ExercisePage({
   onOpenAddModal,
   onRemoveWorkout
 }: ExercisePageProps) {
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const daysList = ['周一', '周二', '周三', '周四', '周五', '周六', '今日'];
+  const today = useMemo(() => new Date(), []);
+  const monday = useMemo(() => getMonday(today), [today]);
 
-  const dayDateLabels: Record<string, string> = {
-    '周一': '2026年7月9日',
-    '周二': '2026年7月10日',
-    '周三': '2026年7月11日',
-    '周四': '2026年7月12日',
-    '周五': '2026年7月13日',
-    '周六': '2026年7月14日',
-    '今日': '2026年7月15日',
-  };
-
-  const parseDateString = (day: string) => {
-    const label = dayDateLabels[day] || day;
-    const match = label.match(/(\d+)年(\d+)月(\d+)日/);
-    if (match) {
-      return {
-        year: parseInt(match[1], 10),
-        month: parseInt(match[2], 10),
-        day: parseInt(match[3], 10)
-      };
+  // Build week: Monday → Sunday (7 days), today's entry uses "今日" label
+  const weekDays = useMemo(() => {
+    const days: { label: string; date: Date; dateStr: string; isToday: boolean }[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      const isTodayDate = isSameDay(d, today);
+      days.push({
+        label: isTodayDate ? '今日' : WEEKDAYS[i],
+        date: d,
+        dateStr: formatDateLabel(d),
+        isToday: isTodayDate,
+      });
     }
-    return { year: 2026, month: 7, day: 15 };
-  };
+    return days;
+  }, [today, monday]);
 
-  const currentParsed = parseDateString(selectedDay);
-  const [tempYear, setTempYear] = useState<number>(currentParsed.year);
-  const [tempMonth, setTempMonth] = useState<number>(currentParsed.month);
-  const [tempDay, setTempDay] = useState<number>(currentParsed.day);
+  // Calendar state
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [calYear, setCalYear] = useState(today.getFullYear());
+  const [calMonth, setCalMonth] = useState(today.getMonth() + 1);
+  const calendarRef = useRef<HTMLDivElement>(null);
 
-  const getDaysInMonth = (year: number, month: number) => {
-    return new Date(year, month, 0).getDate();
-  };
+  // Year-month bottom sheet picker state
+  const [showYearMonthPicker, setShowYearMonthPicker] = useState(false);
+  const [pickerYear, setPickerYear] = useState(today.getFullYear());
+  const [pickerMonth, setPickerMonth] = useState(today.getMonth() + 1);
+  const yearListRef = useRef<HTMLDivElement>(null);
+  const monthListRef = useRef<HTMLDivElement>(null);
+  const YEAR_ITEMS = [2023, 2024, 2025, 2026];
 
-  const handleMonthChange = (m: number) => {
-    setTempMonth(m);
-    const max = getDaysInMonth(tempYear, m);
-    if (tempDay > max) {
-      setTempDay(max);
+  // Measured at runtime so alignment is exact regardless of actual rendered pixel sizes
+  const yearLayout = useRef({ itemH: 36 });
+  const monthLayout = useRef({ itemH: 36 });
+
+  // Center the selected year/month when picker opens
+  useLayoutEffect(() => {
+    if (!showYearMonthPicker) return;
+
+    // Year column: set padding dynamically so paddingTop = (containerH - itemH) / 2
+    if (yearListRef.current) {
+      const containerH = yearListRef.current.clientHeight;
+      const firstItem = yearListRef.current.querySelector('.snap-center');
+      if (firstItem) {
+        const itemH = firstItem.clientHeight;
+        const paddingTop = (containerH - itemH) / 2;
+        yearLayout.current = { itemH };
+        yearListRef.current.style.paddingTop = `${paddingTop}px`;
+        yearListRef.current.style.paddingBottom = `${paddingTop}px`;
+
+        const yearIndex = YEAR_ITEMS.indexOf(pickerYear);
+        if (yearIndex >= 0) {
+          // With paddingTop = (containerH - itemH)/2, offset = 0 → scrollTop = i * itemH
+          yearListRef.current.scrollTop = yearIndex * itemH;
+        }
+      }
     }
-  };
 
-  const handleYearChange = (y: number) => {
-    setTempYear(y);
-    const max = getDaysInMonth(y, tempMonth);
-    if (tempDay > max) {
-      setTempDay(max);
+    // Month column: same dynamic padding
+    if (monthListRef.current) {
+      const containerH = monthListRef.current.clientHeight;
+      const firstItem = monthListRef.current.querySelector('.snap-center');
+      if (firstItem) {
+        const itemH = firstItem.clientHeight;
+        const paddingTop = (containerH - itemH) / 2;
+        monthLayout.current = { itemH };
+        monthListRef.current.style.paddingTop = `${paddingTop}px`;
+        monthListRef.current.style.paddingBottom = `${paddingTop}px`;
+
+        const monthIndex = pickerMonth - 1;
+        if (monthIndex >= 0) {
+          monthListRef.current.scrollTop = monthIndex * itemH;
+        }
+      }
     }
-  };
+  }, [showYearMonthPicker]);
 
-  const handleTogglePicker = () => {
-    if (!showDatePicker) {
-      const parsed = parseDateString(selectedDay);
-      setTempYear(parsed.year);
-      setTempMonth(parsed.month);
-      setTempDay(parsed.day);
+  // Map selectedDay to a Date for comparison
+  const selectedDate = useMemo(() => {
+    if (selectedDay === '今日') return new Date(today);
+    const idx = WEEKDAYS.indexOf(selectedDay as any);
+    if (idx >= 0) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + idx);
+      return d;
     }
-    setShowDatePicker(!showDatePicker);
+    // Try parsing custom date string
+    const m = selectedDay.match(/(\d+)年(\d+)月(\d+)日/);
+    if (m) return new Date(parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]));
+    return today;
+  }, [selectedDay, today, monday]);
+
+  // Month grid for calendar
+  const monthGrid = useMemo(() => {
+    const firstDay = new Date(calYear, calMonth - 1, 1);
+    const lastDate = new Date(calYear, calMonth, 0).getDate();
+    const startDayOfWeek = firstDay.getDay(); // 0=Sun
+    const startOffset = startDayOfWeek === 0 ? 6 : startDayOfWeek - 1; // Mon=0
+
+    const cells: (number | null)[] = [];
+    for (let i = 0; i < startOffset; i++) cells.push(null);
+    for (let d = 1; d <= lastDate; d++) cells.push(d);
+    while (cells.length % 7 !== 0) cells.push(null);
+    return cells;
+  }, [calYear, calMonth]);
+
+  const handleCalendarSelect = (day: number) => {
+    const picked = new Date(calYear, calMonth - 1, day);
+    const label = dateToLabel(picked);
+    if (label) {
+      onSelectDay(label);
+    } else {
+      // Outside current week — use formatted date string
+      onSelectDay(`${calYear}年${calMonth}月${day}日`);
+    }
+    setShowCalendar(false);
   };
 
-  // Calculate dynamic weekly chart minutes
+  const toggleCalendar = () => {
+    if (!showCalendar) {
+      setCalYear(selectedDate.getFullYear());
+      setCalMonth(selectedDate.getMonth() + 1);
+    }
+    setShowCalendar(prev => !prev);
+  };
+
+  // Calculate weekly chart minutes
+  const daysList = weekDays.map(d => d.label);
   const weeklyData = daysList.map((day) => {
     const dayWorkouts = workoutsByDay[day] || [];
     const mins = dayWorkouts.reduce((sum, w) => {
       const minsMatch = w.duration.match(/^(\d+)/);
-      const minsVal = minsMatch ? parseInt(minsMatch[1], 10) : 30;
-      return sum + minsVal;
+      return sum + (minsMatch ? parseInt(minsMatch[1], 10) : 30);
     }, 0);
-
-    return {
-      day,
-      mins,
-      active: day === selectedDay,
-    };
+    return { day, mins, active: day === selectedDay };
   });
 
   const maxWeeklyMins = Math.max(1, ...weeklyData.map(d => d.mins));
-
-  // Get current selected day's workouts
   const currentDayWorkouts = workoutsByDay[selectedDay] || [];
 
-  // Calculate selected day's duration in minutes
   const displayDuration = currentDayWorkouts.reduce((sum, w) => {
     const minsMatch = w.duration.match(/^(\d+)/);
-    const minsVal = minsMatch ? parseInt(minsMatch[1], 10) : 30;
-    return sum + minsVal;
+    return sum + (minsMatch ? parseInt(minsMatch[1], 10) : 30);
   }, 0);
 
   const displayCalories = currentDayWorkouts.reduce((sum, w) => sum + w.calories, 0);
 
-  // Dynamic average intensity mapping
   let displayIntensity = '无';
   if (currentDayWorkouts.length > 0) {
     const intensities = currentDayWorkouts.map(w => w.intensity);
-    if (intensities.includes('high')) {
-      displayIntensity = '高';
-    } else if (intensities.includes('medium-high')) {
-      displayIntensity = '中高';
-    } else if (intensities.includes('medium')) {
-      displayIntensity = '中';
-    } else {
-      displayIntensity = '低';
-    }
+    if (intensities.includes('high')) displayIntensity = '高';
+    else if (intensities.includes('medium-high')) displayIntensity = '中高';
+    else if (intensities.includes('medium')) displayIntensity = '中';
+    else displayIntensity = '低';
   }
-
-  const getDisplayDate = (day: string) => {
-    return dayDateLabels[day] || day;
-  };
 
   return (
     <div className="space-y-4 pb-20 px-4 pt-4 animate-fade-in">
-      
-      {/* Exercise Summary Header */}
-      <div className="flex justify-between items-center px-1 relative z-30">
-        <h2 className="text-sm font-bold text-[#6B7280]">
-          {selectedDay === '今日' ? '今日' : selectedDay}运动汇总
-        </h2>
-        <div className="relative">
+
+      {/* ── Date Header Area (purple-tinted background) ── */}
+      <div className="bg-gradient-to-b from-[#F9F7FF] to-[#F3EEFF] rounded-2xl p-4 relative">
+
+        {/* Top row: left date + right label */}
+        <div className="flex items-center justify-between mb-3">
           <button
-            id="exercise-date-selector"
-            type="button"
-            onClick={handleTogglePicker}
-            className="text-xs font-semibold text-[#8B5CF6] bg-[#8B5CF6]/5 hover:bg-[#8B5CF6]/10 border border-[#8B5CF6]/15 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all shadow-sm active:scale-95 cursor-pointer animate-pulse"
+            onClick={() => {
+              setPickerYear(selectedDate.getFullYear());
+              setPickerMonth(selectedDate.getMonth() + 1);
+              setShowYearMonthPicker(true);
+            }}
+            className="flex items-center gap-1 text-[15px] font-bold text-gray-900 active:scale-95 transition-all"
           >
-            <Calendar size={12} className="text-[#8B5CF6]" />
-            <span className="font-bold">{getDisplayDate(selectedDay)}</span>
-            <ChevronDown size={12} className="text-[#8B5CF6] opacity-70" />
+            {formatDateLabel(selectedDate)}
+            <ChevronDown size={14} className="text-gray-400" />
           </button>
-          
-          {showDatePicker && (
-            <div className="absolute right-0 mt-2 w-72 bg-white/95 backdrop-blur-md rounded-2xl border border-gray-150 shadow-xl p-4 z-50 animate-fade-in space-y-4">
-              <div className="flex items-center justify-between border-b border-gray-100 pb-2">
-                <span className="text-xs font-bold text-gray-800">选择自定义日期</span>
-                <button
-                  type="button"
-                  onClick={() => setShowDatePicker(false)}
-                  className="text-[10px] text-gray-400 hover:text-gray-600 font-semibold cursor-pointer"
-                >
-                  取消
+          <span className="text-[10px] text-gray-400 font-medium bg-white/60 px-2.5 py-0.5 rounded-full">
+            近7天
+          </span>
+        </div>
+
+        {/* Weekday names row */}
+        <div className="flex items-center justify-between mb-1.5 px-0.5">
+          {['一', '二', '三', '四', '五', '六', '日'].map((wd) => (
+            <div key={wd} className="w-9 text-center text-[10px] font-semibold text-gray-400">
+              {wd}
+            </div>
+          ))}
+        </div>
+
+        {/* Date numbers row */}
+        <div className="flex items-center justify-between mb-2">
+          {weekDays.map(({ label, date, isToday }) => {
+            const isSelected = selectedDay === label;
+            return (
+              <button
+                key={label}
+                onClick={() => onSelectDay(label)}
+                className={`w-9 h-9 rounded-full flex items-center justify-center text-[15px] font-extrabold transition-all active:scale-90 ${
+                  isSelected
+                    ? 'bg-[#8B5CF6] text-white shadow-sm shadow-[#8B5CF6]/30'
+                    : isToday
+                      ? 'text-[#8B5CF6]'
+                      : 'text-gray-700 hover:bg-gray-200/50'
+                }`}
+              >
+                {date.getDate()}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* ▼ Dropdown handle (iOS-style drag indicator) */}
+        <div className="flex justify-center">
+          <button
+            onClick={toggleCalendar}
+            className="flex items-center justify-center transition-all active:scale-90 py-1"
+          >
+            <svg
+              width="44" height="18" viewBox="0 0 44 18" fill="none"
+              className={`text-gray-300 transition-transform duration-200 ${showCalendar ? 'rotate-180' : ''}`}
+            >
+              <path
+                d="M6 6L22 16L38 6"
+                stroke="currentColor"
+                strokeWidth="4.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+
+        {/* 📅 Calendar Popover */}
+        {showCalendar && (
+          <div
+            ref={calendarRef}
+            className="absolute left-0 right-0 top-full mt-2 bg-white/95 backdrop-blur-lg rounded-2xl border border-gray-100 shadow-xl p-4 z-50 animate-fade-in"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm font-bold text-gray-800">{calYear}年 {calMonth}月</span>
+              <div className="flex items-center gap-1">
+                <button onClick={() => { if (calMonth === 1) { setCalYear(y => y - 1); setCalMonth(12); } else setCalMonth(m => m - 1); }}
+                  className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500">
+                  <ChevronLeft size={16} />
+                </button>
+                <button onClick={() => { if (calMonth === 12) { setCalYear(y => y + 1); setCalMonth(1); } else setCalMonth(m => m + 1); }}
+                  className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500">
+                  <ChevronRight size={16} />
                 </button>
               </div>
+            </div>
+            <div className="grid grid-cols-7 mb-1">
+              {['一', '二', '三', '四', '五', '六', '日'].map(wd => (
+                <div key={wd} className="text-center text-[10px] font-bold text-gray-400 py-1">{wd}</div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7">
+              {monthGrid.map((day, idx) => {
+                if (day === null) return <div key={idx} />;
+                const dateObj = new Date(calYear, calMonth - 1, day);
+                const isTodayDate = isSameDay(dateObj, today);
+                const isSelectedDate = isSameDay(dateObj, selectedDate);
+                return (
+                  <button key={idx} onClick={() => handleCalendarSelect(day)}
+                    className={`w-full aspect-square flex items-center justify-center text-xs font-bold rounded-full transition-all active:scale-90 ${
+                      isSelectedDate ? 'bg-[#8B5CF6] text-white shadow-sm'
+                        : isTodayDate ? 'bg-[#F3EEFF] text-[#8B5CF6] border border-[#8B5CF6]/20'
+                          : 'text-gray-700 hover:bg-gray-100'
+                    }`}>
+                    {day}
+                  </button>
+                );
+              })}
+            </div>
+            <button onClick={() => { const lbl = dateToLabel(today); onSelectDay(lbl || '今日'); setShowCalendar(false); }}
+              className="w-full mt-3 py-2 bg-[#F3EEFF] hover:bg-[#E8DCFF] text-[#8B5CF6] text-xs font-bold rounded-xl transition-all active:scale-[0.98]">
+              回到今天
+            </button>
+          </div>
+        )}
+      </div>
 
-              {/* Three Select Columns */}
-              <div className="grid grid-cols-3 gap-2">
-                {/* Year Select */}
-                <div className="space-y-1">
-                  <span className="text-[10px] text-gray-400 font-semibold block text-center">年份</span>
-                  <div className="relative">
-                    <select
-                      id="exercise-year-select"
-                      value={tempYear}
-                      onChange={(e) => handleYearChange(Number(e.target.value))}
-                      className="w-full text-xs font-bold bg-gray-50/80 border border-gray-200/50 rounded-xl px-2 py-1.5 text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#8B5CF6]/50 appearance-none text-center cursor-pointer"
-                    >
-                      {[2024, 2025, 2026, 2027, 2028].map((y) => (
-                        <option key={y} value={y}>{y}年</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+      {/* ── Bottom Sheet: Year-Month Picker ── */}
+      {showYearMonthPicker && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex flex-col justify-end" onClick={() => setShowYearMonthPicker(false)}>
+          <div className="bg-white rounded-t-3xl w-full max-w-[390px] mx-auto" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <span className="text-sm font-bold text-gray-400">选择年月</span>
+              <button onClick={() => setShowYearMonthPicker(false)} className="text-xs text-gray-400 font-medium">取消</button>
+            </div>
 
-                {/* Month Select */}
-                <div className="space-y-1">
-                  <span className="text-[10px] text-gray-400 font-semibold block text-center">月份</span>
-                  <div className="relative">
-                    <select
-                      id="exercise-month-select"
-                      value={tempMonth}
-                      onChange={(e) => handleMonthChange(Number(e.target.value))}
-                      className="w-full text-xs font-bold bg-gray-50/80 border border-gray-200/50 rounded-xl px-2 py-1.5 text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#8B5CF6]/50 appearance-none text-center cursor-pointer"
-                    >
-                      {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-                        <option key={m} value={m}>{m}月</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {/* Day Select */}
-                <div className="space-y-1">
-                  <span className="text-[10px] text-gray-400 font-semibold block text-center">日期</span>
-                  <div className="relative">
-                    <select
-                      id="exercise-day-select"
-                      value={tempDay}
-                      onChange={(e) => setTempDay(Number(e.target.value))}
-                      className="w-full text-xs font-bold bg-gray-50/80 border border-gray-200/50 rounded-xl px-2 py-1.5 text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#8B5CF6]/50 appearance-none text-center cursor-pointer"
-                    >
-                      {Array.from({ length: getDaysInMonth(tempYear, tempMonth) }, (_, i) => i + 1).map((d) => (
-                        <option key={d} value={d}>{d}日</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              {/* Predefined Shortcut Grid */}
-              <div className="space-y-1.5 pt-1 border-t border-gray-50">
-                <span className="text-[9px] text-gray-400 font-semibold block">快捷选择</span>
-                <div className="grid grid-cols-4 gap-1">
-                  {daysList.map((day) => (
-                    <button
-                      key={day}
-                      id={`exercise-date-shortcut-${day}`}
-                      type="button"
-                      onClick={() => {
-                        onSelectDay(day);
-                        setShowDatePicker(false);
-                      }}
-                      className={`px-1.5 py-1 text-[10px] font-semibold rounded-lg border transition-all text-center cursor-pointer ${
-                        selectedDay === day
-                          ? 'bg-[#8B5CF6] text-white border-[#8B5CF6]'
-                          : 'bg-gray-50 border-gray-150 text-gray-600 hover:bg-gray-100'
-                      }`}
-                    >
-                      {day}
-                    </button>
+            {/* Scrollable columns */}
+            <div className="flex gap-4 px-6 py-4 h-52">
+              {/* Year column */}
+              <div className="flex-1 relative">
+                {/* Center indicator line */}
+                <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 h-9 bg-[#8B5CF6]/10 rounded-lg pointer-events-none" />
+                <div ref={yearListRef} className="h-full overflow-y-auto snap-y snap-mandatory scrollbar-none"
+                  onScroll={() => {
+                    if (!yearListRef.current) return;
+                    const { itemH } = yearLayout.current;
+                    const index = Math.round(yearListRef.current.scrollTop / itemH);
+                    if (index >= 0 && index < YEAR_ITEMS.length) setPickerYear(YEAR_ITEMS[index]);
+                  }}
+                >
+                  {YEAR_ITEMS.map(y => (
+                    <div key={y} className="h-9 snap-center flex items-center justify-center">
+                      <span className={`text-sm ${y === pickerYear ? 'font-extrabold text-[#4C1D95]' : 'font-medium text-gray-400'}`}>
+                        {y}年
+                      </span>
+                    </div>
                   ))}
                 </div>
               </div>
 
-              {/* Action Buttons */}
+              {/* Month column */}
+              <div className="flex-1 relative">
+                <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 h-9 bg-[#8B5CF6]/10 rounded-lg pointer-events-none" />
+                <div ref={monthListRef} className="h-full overflow-y-auto snap-y snap-mandatory scrollbar-none"
+                  onScroll={() => {
+                    if (!monthListRef.current) return;
+                    const { itemH } = monthLayout.current;
+                    const index = Math.round(monthListRef.current.scrollTop / itemH);
+                    if (index >= 0 && index <= 11) setPickerMonth(index + 1);
+                  }}
+                >
+                  {Array.from({length: 12}, (_, i) => i + 1).map(m => (
+                    <div key={m} className="h-9 snap-center flex items-center justify-center">
+                      <span className={`text-sm ${m === pickerMonth ? 'font-extrabold text-[#4C1D95]' : 'font-medium text-gray-400'}`}>
+                        {m}月
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Confirm button */}
+            <div className="px-6 pb-6 pt-2">
               <button
-                id="exercise-date-confirm-btn"
-                type="button"
                 onClick={() => {
-                  const formattedDate = `${tempYear}年${tempMonth}月${tempDay}日`;
-                  let matchedKey = '';
-                  for (const [key, labelStr] of Object.entries(dayDateLabels)) {
-                    if (labelStr === formattedDate) {
-                      matchedKey = key;
-                      break;
-                    }
-                  }
-                  onSelectDay(matchedKey || formattedDate);
-                  setShowDatePicker(false);
+                  // Update calYear/calMonth so the month grid and date display update
+                  setCalYear(pickerYear);
+                  setCalMonth(pickerMonth);
+                  setShowYearMonthPicker(false);
                 }}
-                className="w-full py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] active:scale-95 text-white text-xs font-bold rounded-xl shadow-sm transition-all text-center cursor-pointer"
+                className="w-full py-3 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white font-bold text-sm rounded-xl active:scale-[0.98] transition-all shadow-md"
               >
                 确定
               </button>
             </div>
-          )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Main Selected Day's Workout Card */}
       <div className="bg-white/70 backdrop-blur-md border border-white/50 rounded-[16px] p-4 shadow-sm">

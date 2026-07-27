@@ -3,6 +3,7 @@ import { X, Plus, Minus, Trash2, Sparkles, Scale, Utensils, Loader2, Database } 
 import { AIDietAnalysis, MealCategory } from '../types';
 import type { ZhipuFoodAnalysis } from '../api/zhipu';
 import { saveFoodCorrection } from '../api/zhipu';
+import { analyzeFood } from '../api/endpoints';
 
 interface EditableIngredient {
   id: string;
@@ -64,13 +65,31 @@ export default function AIScanEditModal({
 }: AIScanEditModalProps) {
   const [mealName, setMealName] = useState('');
   const [ingredients, setIngredients] = useState<EditableIngredient[]>([]);
-  const [selectedSizeLevel, setSelectedSizeLevel] = useState<string>('medium');
-
-  // 手动校正热量
-  const [showManualCalibration, setShowManualCalibration] = useState(false);
-  const [manualKcalPer100g, setManualKcalPer100g] = useState('');
-  const [manualWeightG, setManualWeightG] = useState('');
-  const [calibrationSaved, setCalibrationSaved] = useState(false);
+  const [servingSize, setServingSize] = useState('');
+  const [editingCalories, setEditingCalories] = useState(false);
+  const [manualCalories, setManualCalories] = useState<number | null>(null);
+  const [isRecalculating, setIsRecalculating] = useState(false);
+  const handleRecalculate = async () => {
+    if (!mealName.trim() || isRecalculating) return;
+    setIsRecalculating(true);
+    try {
+      const result = await analyzeFood(mealName.trim(), 100);
+      setIngredients([{
+        id: `ing-ai-${Date.now()}`,
+        name: mealName.trim(),
+        weight: 100,
+        unit: 'g',
+        caloriesPerGram: result.nutrition.calories / 100,
+        proteinPerGram: result.nutrition.protein / 100,
+        carbsPerGram: result.nutrition.carbs / 100,
+        fatPerGram: result.nutrition.fat / 100,
+      }]);
+    } catch {
+      // Keep existing data on failure
+    } finally {
+      setIsRecalculating(false);
+    }
+  };
 
   // Guess unit from ingredient name
   const guessUnit = (name: string): 'g' | 'ml' => {
@@ -106,13 +125,8 @@ export default function AIScanEditModal({
     }
 
     if (presetIndex === 0) {
-      setMealName('香煎三文鱼藜麦碗');
-      setIngredients([
-        makeIngredient('烤三文鱼', 150, 312, 30, 0, 15),
-        makeIngredient('三色藜麦', 100, 120, 4, 24, 2),
-        makeIngredient('新鲜牛油果', 50, 80, 1, 4, 7),
-        makeIngredient('混合蔬菜与柠檬酱汁', 50, 30, 1, 5, 0),
-      ]);
+      setMealName('');
+      setIngredients([]);
     } else {
       setMealName('水煮鸡胸肉沙拉');
       setIngredients([
@@ -209,25 +223,6 @@ export default function AIScanEditModal({
     setIngredients((prev) => [...prev, newIng]);
   };
 
-  // 份量等级切换：按比例缩放所有食材重量
-  const sizeFactors: Record<string, number> = { small: 0.6, medium: 1.0, large: 1.5 };
-  const sizeLabels: Record<string, { label: string; desc: string }> = {
-    small: { label: '小份', desc: '约 60% 标准份量' },
-    medium: { label: '中份', desc: '标准一人份' },
-    large: { label: '大份', desc: '约 150% 标准份量' },
-  };
-  const handleSizeChange = (newSize: string) => {
-    if (newSize === selectedSizeLevel) return;
-    const factor = sizeFactors[newSize] / sizeFactors[selectedSizeLevel];
-    setSelectedSizeLevel(newSize);
-    setIngredients((prev) =>
-      prev.map((ing) => ({
-        ...ing,
-        weight: Math.round(ing.weight * factor),
-      }))
-    );
-  };
-
   // Dynamic Calculations
   const calculatedStats = ingredients.reduce(
     (acc, ing) => {
@@ -247,6 +242,7 @@ export default function AIScanEditModal({
   );
 
   const totalCalories = Math.round(calculatedStats.calories);
+  const effectiveCalories = manualCalories !== null ? manualCalories : totalCalories;
   const totalProtein = Math.round(calculatedStats.protein * 10) / 10;
   const totalCarbs = Math.round(calculatedStats.carbs * 10) / 10;
   const totalFat = Math.round(calculatedStats.fat * 10) / 10;
@@ -256,44 +252,18 @@ export default function AIScanEditModal({
   const carbsPercent = Math.round((totalCarbs / totalMacros) * 100);
   const fatPercent = 100 - proteinPercent - carbsPercent;
 
-  // 手动校正热量：用户输入每百克热量 + 包装克重，立即更新显示
-  const handleManualCalibration = async () => {
-    const kcalPer100g = parseInt(manualKcalPer100g);
-    if (!kcalPer100g || kcalPer100g <= 0) return;
-
-    const weightG = parseInt(manualWeightG) || ingredients.reduce((s, i) => s + i.weight, 0);
-    if (weightG <= 0) return;
-
-    // 1. 立即更新所有食材的热量密度
-    setIngredients(prev =>
-      prev.map(ing => ({
-        ...ing,
-        caloriesPerGram: kcalPer100g / 100,
-        calories: Math.round(ing.weight * kcalPer100g / 100),
-      }))
-    );
-
-    // 2. 写入后端缓存（fire-and-forget）
-    saveFoodCorrection({
-      foodName: mealName || (geminiAnalysis as any)?.mealName || '未知食物',
-      weight: weightG,
-      calories: Math.round(weightG * kcalPer100g / 100),
-    })
-      .then(() => setCalibrationSaved(true))
-      .catch(() => {});
-  };
   const handleConfirm = () => {
     // Standard advice template customized dynamically
     const categoryName = category === 'breakfast' ? '早餐' : category === 'lunch' ? '午餐' : '晚餐';
     const finalAnalysis: AIDietAnalysis = {
       name: mealName || 'AI 识图餐食',
-      calories: totalCalories,
+      calories: effectiveCalories,
       protein: { amount: Math.round(totalProtein), percentage: proteinPercent },
       carbs: { amount: Math.round(totalCarbs), percentage: carbsPercent },
       fat: { amount: Math.round(totalFat), percentage: fatPercent > 0 ? fatPercent : 0 },
       suggestions: {
         optimization: geminiAnalysis?.suggestion ||
-          `经过调整后的这餐${categoryName}总热量为 ${totalCalories} kcal。蛋白质占比 ${proteinPercent}%，比例适中。建议配合足够的水分，在下一餐适量增加高纤维蔬菜，更有利于肠道代谢。`,
+          `经过调整后的这餐${categoryName}总热量为 ${effectiveCalories} kcal。蛋白质占比 ${proteinPercent}%，比例适中。建议配合足够的水分，在下一餐适量增加高纤维蔬菜，更有利于肠道代谢。`,
         exercise: geminiAnalysis?.exercise ||
           `该餐富含能量与营养储备，建议在餐后 1.5 小时进行 40 分钟的有氧慢跑或 30 分钟的高效全身抗阻力量训练，将碳水化合物充分转化为肌糖原。`,
       },
@@ -315,7 +285,7 @@ export default function AIScanEditModal({
       saveFoodCorrection({
         foodName: mealName || geminiAnalysis.mealName || '未知食物',
         weight: totalWeight || 100,
-        calories: totalCalories,
+        calories: effectiveCalories,
         protein: Math.round(totalProtein * 10) / 10,
         carbs: Math.round(totalCarbs * 10) / 10,
         fat: Math.round(totalFat * 10) / 10,
@@ -377,157 +347,75 @@ export default function AIScanEditModal({
               <div>
                 <p className="text-xs font-bold text-blue-700">数据来自 AI 联网搜索</p>
                 <p className="text-[11px] text-blue-600 mt-0.5">
-                  若发现热量与包装标注不一致，可使用下方「手动校正热量」录入精确值，永久生效。
+                  若发现热量与包装标注不一致，可直接点击上方热量数字进行修改。
                 </p>
               </div>
             </div>
           )}
 
-          {/* Meal Name Input */}
-          <div className="space-y-1.5">
+          {/* 食物名称与分量 */}
+          <div className="space-y-2">
             <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
-              <Utensils size={11} /> 菜品名称
+              <Utensils size={11} /> 食物名称与分量
             </label>
-            <input
-              type="text"
-              value={mealName}
-              onChange={(e) => setMealName(e.target.value)}
-              className="w-full px-3.5 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-800 bg-gray-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#8B5CF6]/20 focus:border-[#8B5CF6] transition-all"
-              placeholder="请输入菜品名称"
-            />
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="text"
+                value={mealName}
+                onChange={(e) => setMealName(e.target.value)}
+                className="w-full px-3.5 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-800 bg-gray-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#8B5CF6]/20 focus:border-[#8B5CF6] transition-all"
+                placeholder="输入食物名称"
+              />
+              <input
+                type="text"
+                value={servingSize}
+                onChange={(e) => setServingSize(e.target.value)}
+                className="w-full px-3.5 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-800 bg-gray-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#8B5CF6]/20 focus:border-[#8B5CF6] transition-all"
+                placeholder="规格"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleRecalculate}
+              disabled={isRecalculating || !mealName.trim()}
+              className="w-full py-2.5 rounded-xl bg-[#F3EEFF] text-[#8B5CF6] font-bold text-[12px] flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all disabled:opacity-50 shadow-sm"
+            >
+              {isRecalculating ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Sparkles size={14} />
+              )}
+              AI 智能快速测算热量
+            </button>
           </div>
-
-          {/* Ingredients list */}
-          <div className="space-y-2.5">
-            <div className="flex justify-between items-center">
-              <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
-                <Scale size={11} /> 识别到的食材与估重
-              </label>
-              <button
-                type="button"
-                onClick={handleAddIngredient}
-                className="text-[11px] font-semibold text-[#8B5CF6] hover:text-[#7C3AED] hover:underline flex items-center gap-0.5"
-              >
-                + 添加食材
-              </button>
-            </div>
-
-            {ingredients.length === 0 ? (
-              <div className="text-center py-6 border border-dashed border-gray-200 rounded-2xl bg-gray-50/50">
-                <p className="text-xs text-gray-400">暂无食材，请添加</p>
-              </div>
-            ) : (
-              <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
-                {ingredients.map((ing) => (
-                  <div
-                    key={ing.id}
-                    className="flex items-center gap-2.5 p-3 rounded-2xl border border-gray-100 bg-white shadow-sm hover:border-gray-200 transition-all"
-                  >
-                    {/* Name Edit Input */}
-                    <input
-                      type="text"
-                      value={ing.name}
-                      onChange={(e) => handleNameChange(ing.id, e.target.value)}
-                      className="flex-1 min-w-0 bg-transparent text-xs font-bold text-gray-700 border-b border-transparent hover:border-gray-200 focus:border-[#8B5CF6] focus:outline-none py-0.5"
-                    />
-
-                    {/* Weight Adjustment Controls */}
-                    <div className="flex items-center gap-1.5 bg-gray-50/80 px-2 py-1 rounded-xl border border-gray-100">
-                      <button
-                        type="button"
-                        onClick={() => handleWeightChange(ing.id, ing.weight - 10)}
-                        className="w-5 h-5 rounded-md bg-white hover:bg-gray-100 text-gray-500 flex items-center justify-center transition-all shadow-sm active:scale-95"
-                      >
-                        <Minus size={10} />
-                      </button>
-                      
-                      <div className="flex items-center">
-                        <input
-                          type="number"
-                          value={ing.weight}
-                          onChange={(e) => handleWeightChange(ing.id, parseInt(e.target.value) || 0)}
-                          className="w-10 text-center text-xs font-extrabold text-gray-800 bg-transparent focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handleUnitToggle(ing.id)}
-                          className="text-[10px] font-bold ml-0.5 px-1 py-0.5 rounded bg-gray-200 hover:bg-purple-200 text-gray-500 hover:text-purple-600 transition-colors"
-                          title="点击切换克(g)/毫升(ml)"
-                        >
-                          {ing.unit}
-                        </button>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => handleWeightChange(ing.id, ing.weight + 10)}
-                        className="w-5 h-5 rounded-md bg-white hover:bg-gray-100 text-gray-500 flex items-center justify-center transition-all shadow-sm active:scale-95"
-                      >
-                        <Plus size={10} />
-                      </button>
-                    </div>
-
-                    {/* Delete Icon */}
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteIngredient(ing.id)}
-                      className="text-gray-300 hover:text-rose-500 p-1 rounded-lg hover:bg-rose-50 transition-colors"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Portion Size Selector — 用户手动调节份量 */}
-          <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 space-y-3">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">🤖</span>
-              <div>
-                <p className="text-xs font-bold text-amber-800">
-                  AI 判断：{sizeLabels[selectedSizeLevel]?.label || '中份'}
-                  <span className="text-amber-600 font-normal ml-1">
-                    （约 {ingredients.reduce((s, i) => s + i.weight, 0)}g）
-                  </span>
-                </p>
-                <p className="text-[10px] text-amber-600 mt-0.5">
-                  拖动下方按钮调节份量，帮助 AI 学习更准的克重
-                </p>
-              </div>
-            </div>
-
-              {/* Size Buttons */}
-              <div className="flex gap-2">
-                {(['small', 'medium', 'large'] as const).map((size) => (
-                  <button
-                    key={size}
-                    type="button"
-                    onClick={() => handleSizeChange(size)}
-                    className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all active:scale-95 ${
-                      selectedSizeLevel === size
-                        ? 'bg-amber-500 text-white shadow-md shadow-amber-200'
-                        : 'bg-white text-amber-700 border border-amber-200 hover:bg-amber-50'
-                    }`}
-                  >
-                    <div>{sizeLabels[size].label}</div>
-                    <div className={`text-[10px] font-normal mt-0.5 ${
-                      selectedSizeLevel === size ? 'text-amber-100' : 'text-amber-500'
-                    }`}>
-                      {sizeLabels[size].desc}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
 
           {/* Dynamic Nutrients Breakdown */}
           <div className="p-4 rounded-2xl bg-gradient-to-br from-[#FAF8FF] to-[#F1EAFF] border border-[#E9E1FF] space-y-3">
             <div className="flex justify-between items-end">
               <span className="text-xs font-semibold text-[#4B1BB3]">预计总热量</span>
               <div className="flex items-baseline gap-0.5">
-                <span className="text-xl font-extrabold text-[#4B1BB3]">{totalCalories}</span>
+                {editingCalories ? (
+                  <input
+                    type="number"
+                    autoFocus
+                    value={manualCalories ?? effectiveCalories}
+                    onChange={e => setManualCalories(e.target.value === '' ? null : Number(e.target.value))}
+                    onBlur={() => setEditingCalories(false)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') setEditingCalories(false);
+                      if (e.key === 'Escape') { setManualCalories(null); setEditingCalories(false); }
+                    }}
+                    className="w-20 text-xl font-extrabold text-[#4B1BB3] bg-white border border-[#8B5CF6]/30 rounded-lg px-2 py-0.5 text-right outline-none focus:ring-2 focus:ring-[#8B5CF6]/20 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { setManualCalories(effectiveCalories); setEditingCalories(true); }}
+                    className="text-xl font-extrabold text-[#4B1BB3] hover:bg-[#8B5CF6]/10 px-2 py-0.5 -ml-2 rounded-lg transition-colors active:scale-95"
+                  >
+                    {effectiveCalories}
+                  </button>
+                )}
                 <span className="text-[10px] font-bold text-[#8B5CF6]">千卡 (kcal)</span>
               </div>
             </div>
@@ -583,85 +471,6 @@ export default function AIScanEditModal({
             </div>
           </div>
 
-          {/* 手动校正热量 — 折叠面板 */}
-          <div className="border border-dashed border-amber-300 rounded-2xl overflow-hidden">
-            {/* Toggle header */}
-            <button
-              type="button"
-              onClick={() => {
-                setShowManualCalibration(!showManualCalibration);
-                setCalibrationSaved(false);
-              }}
-              className="w-full p-3 flex items-center justify-between bg-amber-50/70 hover:bg-amber-50 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-sm">{calibrationSaved ? '✅' : '🤔'}</span>
-                <span className="text-xs font-semibold text-amber-800">
-                  {calibrationSaved ? '热量已校正！' : '觉得热量不准确？'}
-                </span>
-                {calibrationSaved && (
-                  <span className="text-[10px] text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full">
-                    已保存
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-1 text-amber-600">
-                <span className="text-[10px] font-bold">
-                  {showManualCalibration ? '收起' : '手动校正热量'}
-                </span>
-                <span className={`transform transition-transform ${showManualCalibration ? 'rotate-180' : ''}`}>
-                  ▾
-                </span>
-              </div>
-            </button>
-
-            {/* Expandable inputs */}
-            {showManualCalibration && (
-              <div className="p-4 space-y-3 bg-white">
-                <div className="flex gap-3">
-                  <div className="flex-1">
-                    <label className="text-[10px] font-bold text-gray-500 block mb-1">
-                      每100克热量 (kcal)
-                    </label>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      value={manualKcalPer100g}
-                      onChange={e => setManualKcalPer100g(e.target.value)}
-                      placeholder="如 820"
-                      className="w-full px-3 py-2.5 text-sm font-bold text-gray-800 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-amber-400 focus:bg-white transition-all"
-                    />
-                  </div>
-                  <div className="w-24">
-                    <label className="text-[10px] font-bold text-gray-500 block mb-1">
-                      克重 (可选)
-                    </label>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      value={manualWeightG}
-                      onChange={e => setManualWeightG(e.target.value)}
-                      placeholder={`${Math.round(ingredients.reduce((s, i) => s + i.weight, 0))}g`}
-                      className="w-full px-3 py-2.5 text-sm font-bold text-gray-800 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-amber-400 focus:bg-white transition-all"
-                    />
-                  </div>
-                </div>
-
-                <div className="text-[10px] text-gray-400 leading-relaxed">
-                  💡 修改后将立即更新热量显示，并永久保存到个人数据库，下次识别自动使用精准数据。
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleManualCalibration}
-                  disabled={!manualKcalPer100g || parseInt(manualKcalPer100g) <= 0}
-                  className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white rounded-xl text-xs font-bold transition-all active:scale-[0.98]"
-                >
-                  保存并应用
-                </button>
-              </div>
-            )}
-          </div>
         </div>
 
         {/* Footer */}

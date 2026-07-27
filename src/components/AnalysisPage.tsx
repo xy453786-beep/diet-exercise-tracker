@@ -1,9 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Calendar, Info, Sparkles, ChevronDown, CheckCircle2, TrendingUp } from 'lucide-react';
+import { Info, Sparkles, CheckCircle2, TrendingUp, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart,
   Line,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   Tooltip,
@@ -20,6 +22,16 @@ interface AnalysisPageProps {
   workoutsByDay: Record<string, WorkoutItem[]>;
   selectedDay?: string;
   height: number;
+}
+
+/** Get Monday of the week containing the given date */
+function getMonday(d: Date): Date {
+  const day = d.getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + offset);
+  monday.setHours(0, 0, 0, 0);
+  return monday;
 }
 
 // Seedable deterministic pseudo-random to prevent chart values changing on every render
@@ -39,8 +51,9 @@ export default function AnalysisPage({
 }: AnalysisPageProps) {
   const initialTimeframe = selectedDay === '今日' ? 'today' : (selectedDay as Timeframe);
   const [timeframe, setTimeframe] = useState<Timeframe>(initialTimeframe);
-  const [showDropdown, setShowDropdown] = useState(false);
   const [chartTimeframe, setChartTimeframe] = useState<7 | 30>(7);
+  const [timeDimension, setTimeDimension] = useState<'day' | 'week' | 'month'>('week');
+  const [navDate, setNavDate] = useState(new Date());
 
   useEffect(() => {
     setTimeframe(selectedDay === '今日' ? 'today' : (selectedDay as Timeframe));
@@ -111,23 +124,50 @@ export default function AnalysisPage({
     displayDays = 1;
   }
 
-  const timeframeLabels: Record<Timeframe, string> = {
-    today: '今日',
-    '3days': '近 3 天',
-    '7days': '近 7 天',
-    '今日': '今日',
-    '周一': '周一',
-    '周二': '周二',
-    '周三': '周三',
-    '周四': '周四',
-    '周五': '周五',
-    '周六': '周六',
+  const handleTimeDimensionChange = (dim: 'day' | 'week' | 'month') => {
+    setTimeDimension(dim);
+    setNavDate(new Date());
+    setTimeframe(dim === 'day' ? 'today' : '7days');
   };
 
-  const handleSelectTimeframe = (tf: Timeframe) => {
-    setTimeframe(tf);
-    setShowDropdown(false);
+  const goPrev = () => {
+    const d = new Date(navDate);
+    switch (timeDimension) {
+      case 'day': d.setDate(d.getDate() - 1); break;
+      case 'week': d.setDate(d.getDate() - 7); break;
+      case 'month': d.setMonth(d.getMonth() - 1); break;
+    }
+    setNavDate(d);
   };
+
+  const goNext = () => {
+    const d = new Date(navDate);
+    switch (timeDimension) {
+      case 'day': d.setDate(d.getDate() + 1); break;
+      case 'week': d.setDate(d.getDate() + 7); break;
+      case 'month': d.setMonth(d.getMonth() + 1); break;
+    }
+    setNavDate(d);
+  };
+
+  const dateText = useMemo(() => {
+    const d = navDate;
+    switch (timeDimension) {
+      case 'day':
+        return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+      case 'week': {
+        const monday = getMonday(d);
+        const sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 6);
+        const sameYear = monday.getFullYear() === sunday.getFullYear();
+        return sameYear
+          ? `${monday.getFullYear()}年${monday.getMonth() + 1}月${monday.getDate()}日至${sunday.getMonth() + 1}月${sunday.getDate()}日`
+          : `${monday.getFullYear()}年${monday.getMonth() + 1}月${monday.getDate()}日至${sunday.getFullYear()}年${sunday.getMonth() + 1}月${sunday.getDate()}日`;
+      }
+      case 'month':
+        return `${d.getFullYear()}年${d.getMonth() + 1}月`;
+    }
+  }, [navDate, timeDimension]);
 
   // 7 Days Chart Data
   const daysOfWeek = ['周一', '周二', '周三', '周四', '周五', '周六', '今日'];
@@ -232,37 +272,43 @@ export default function AnalysisPage({
   return (
     <div className="space-y-4 pb-20 px-4 pt-4 animate-fade-in relative">
       
-      {/* Date Dropdown selector */}
-      <div className="flex justify-between items-center z-10 relative">
-        <div className="relative">
-          <button
-            id="analysis-dropdown-trigger"
-            onClick={() => setShowDropdown(!showDropdown)}
-            className="bg-white/70 backdrop-blur-md px-3 py-2 rounded-xl border border-white/50 flex items-center gap-1.5 shadow-sm text-xs font-bold text-gray-800 hover:bg-gray-50 active:scale-95 transition-all animate-pulse"
-          >
-            <Calendar size={13} className="text-[#8B5CF6]" />
-            <span>{timeframeLabels[timeframe]}</span>
-            <ChevronDown size={12} className="text-gray-400" />
-          </button>
-
-          {showDropdown && (
-            <div className="absolute left-0 mt-1.5 w-32 bg-white/95 backdrop-blur-lg border border-gray-100 rounded-xl shadow-xl py-1.5 z-30 animate-fade-in max-h-64 overflow-y-auto">
-              {(['today', '周一', '周二', '周三', '周四', '周五', '周六', '3days', '7days'] as const).map((tf) => (
-                <button
-                  key={tf}
-                  id={`select-tf-${tf}-btn`}
-                  onClick={() => handleSelectTimeframe(tf)}
-                  className={`w-full text-left px-3.5 py-2 text-xs font-semibold transition-all ${
-                    timeframe === tf ? 'text-[#8B5CF6] bg-[#F3EEFF] font-bold' : 'text-gray-700 hover:bg-gray-50'
-                  }`}
-                >
-                  {timeframeLabels[tf]}
-                </button>
-              ))}
-            </div>
-          )}
+      {/* Time dimension capsule + Date navigation */}
+      <div className="bg-white/70 backdrop-blur-md border border-white/50 rounded-[16px] p-4 shadow-sm">
+        {/* Capsule Tabs */}
+        <div className="bg-gray-100/80 rounded-xl p-1 flex mb-4">
+          {(['day', 'week', 'month'] as const).map(dim => (
+            <button
+              key={dim}
+              onClick={() => handleTimeDimensionChange(dim)}
+              className={`flex-1 py-2.5 text-[14px] font-bold rounded-lg transition-all ${
+                timeDimension === dim
+                  ? 'bg-white text-[#8B5CF6] shadow-sm'
+                  : 'text-gray-400'
+              }`}
+            >
+              {dim === 'day' ? '日' : dim === 'week' ? '周' : '月'}
+            </button>
+          ))}
         </div>
-        <span className="text-xs text-gray-400 font-semibold">选择记录日期进行多维分析</span>
+
+        {/* Date Navigation */}
+        <div className="flex items-center justify-center gap-3">
+          <button
+            onClick={goPrev}
+            className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center active:scale-90 transition-all"
+          >
+            <ChevronLeft size={18} className="text-gray-400" />
+          </button>
+          <span className="text-[15px] font-semibold text-gray-800 min-w-[200px] text-center select-none">
+            {dateText}
+          </span>
+          <button
+            onClick={goNext}
+            className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center active:scale-90 transition-all"
+          >
+            <ChevronRight size={18} className="text-gray-400" />
+          </button>
+        </div>
       </div>
 
       {/* Grid of four core metric cards */}
@@ -297,6 +343,66 @@ export default function AnalysisPage({
             <span className="text-[18px] font-black text-gray-900">{displayWorkoutBurn}</span>
             <span className="text-[10px] text-gray-400 font-medium">kcal/天</span>
           </div>
+        </div>
+      </div>
+
+      {/* Weight Trend Card */}
+      <div className="bg-white/70 backdrop-blur-md border border-white/50 rounded-[16px] p-4 shadow-sm">
+        <div className="flex justify-between items-center mb-2">
+          <div>
+            <h3 className="text-[14px] font-semibold text-[#111111]">
+              体重趋势
+            </h3>
+            <p className="text-[11px] text-[#9CA3AF]">近 7 天体重变化走势</p>
+          </div>
+        </div>
+
+        <div className="h-36 w-full mt-2">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart
+              data={weights}
+              margin={{ top: 10, right: 10, left: 10, bottom: 0 }}
+              style={{ cursor: 'pointer' }}
+            >
+              <defs>
+                <linearGradient id="weightGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#8B5CF6" stopOpacity={0.2}/>
+                  <stop offset="95%" stopColor="#8B5CF6" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <XAxis
+                dataKey="day"
+                axisLine={false}
+                tickLine={false}
+                tick={{ fill: '#9CA3AF', fontSize: 10 }}
+              />
+              <YAxis
+                domain={['dataMin - 1', 'dataMax + 1']}
+                hide={true}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: 'rgba(17,17,17,0.95)',
+                  borderRadius: '12px',
+                  border: 'none',
+                  fontSize: '11px',
+                  fontWeight: 'bold',
+                  color: '#fff',
+                }}
+                formatter={(value: any) => [`${value} kg`, '体重']}
+              />
+              <Area
+                type="monotone"
+                dataKey="weight"
+                stroke="#8B5CF6"
+                strokeWidth={3}
+                fillOpacity={1}
+                fill="url(#weightGrad)"
+                dot={{ r: 4, strokeWidth: 2, stroke: '#8B5CF6', fill: '#FFFFFF' }}
+                activeDot={{ r: 7, stroke: '#8B5CF6', strokeWidth: 2, fill: '#8B5CF6' }}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
         </div>
       </div>
 
