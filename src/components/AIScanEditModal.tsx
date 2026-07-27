@@ -92,8 +92,8 @@ export default function AIScanEditModal({
         carbsPerGram: result.nutrition.carbs / 100,
         fatPerGram: result.nutrition.fat / 100,
       }]);
-    } catch {
-      // Keep existing data on failure
+    } catch (err: any) {
+      alert(`AI 分析失败：${err.message || '网络错误，请稍后重试'}`);
     } finally {
       if (mountedRef.current) setIsRecalculating(false);
     }
