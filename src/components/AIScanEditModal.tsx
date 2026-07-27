@@ -39,7 +39,6 @@ function SourceBadge({ source }: { source: string }) {
     'cache': { label: '缓存命中', bg: 'bg-blue-100', text: 'text-blue-700' },
     'ai_estimated': { label: 'AI 估算', bg: 'bg-amber-100', text: 'text-amber-700' },
   };
-
   // 解析 source 字段（格式："source_key|中文标签"）
   const key = source.split('|')[0];
   const cfg = config[key] || { label: key, bg: 'bg-gray-100', text: 'text-gray-600' };
@@ -63,6 +62,8 @@ export default function AIScanEditModal({
   onClose,
   onConfirm,
 }: AIScanEditModalProps) {
+  console.log('[AIScanEditModal] isOpen=%s geminiLoading=%s presetIndex=%s geminiAnalysis=%o',
+    isOpen, geminiLoading, presetIndex, geminiAnalysis);
   const [mealName, setMealName] = useState('');
   const [ingredients, setIngredients] = useState<EditableIngredient[]>([]);
   const [servingSize, setServingSize] = useState('');
@@ -73,16 +74,20 @@ export default function AIScanEditModal({
   // 追踪组件是否已卸载，防止异步回调中 setState 导致 DOM 报错
   const mountedRef = useRef(true);
   useEffect(() => {
+    mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
 
   const handleRecalculate = async () => {
+    console.log('[handleRecalculate] 1. entered, mealName="%s" isRecalculating=%s', mealName, isRecalculating);
     if (!mealName.trim() || isRecalculating) return;
     setIsRecalculating(true);
+    console.log('[handleRecalculate] 2. set isRecalculating=true, calling analyzeFood...');
     try {
       const result = await analyzeFood(mealName.trim(), 100);
+      console.log('[handleRecalculate] 3. API returned:', result);
       if (!mountedRef.current) return;
-      setIngredients([{
+      const newIngredient = {
         id: `ing-ai-${Date.now()}`,
         name: mealName.trim(),
         weight: 100,
@@ -91,20 +96,22 @@ export default function AIScanEditModal({
         proteinPerGram: result.nutrition.protein / 100,
         carbsPerGram: result.nutrition.carbs / 100,
         fatPerGram: result.nutrition.fat / 100,
-      }]);
+      };
+      console.log('[handleRecalculate] 3.5 setIngredients with:', newIngredient, '| current ingredients before set:', ingredients);
+      setIngredients([newIngredient]);
     } catch (err: any) {
+      console.log('[handleRecalculate] 4. catch error:', err.message);
       alert(`AI 分析失败：${err.message || '网络错误，请稍后重试'}`);
     } finally {
+      console.log('[handleRecalculate] 5. finally, set isRecalculating=false');
       if (mountedRef.current) setIsRecalculating(false);
     }
   };
-
   // Guess unit from ingredient name
   const guessUnit = (name: string): 'g' | 'ml' => {
     const liquids = ['咖啡', '牛奶', '奶茶', '果汁', '豆浆', '酸奶', '汤', '汁', '酱', '饮', '水', '茶', '酒', '奶', '油', '醋', '露', '液'];
     return liquids.some(kw => name.includes(kw)) ? 'ml' : 'g';
   };
-
   const makeIngredient = (name: string, weight: number, calories: number, protein: number, carbs: number, fat: number): EditableIngredient => {
     const w = weight > 0 ? weight : 1;
     return {
@@ -118,14 +125,17 @@ export default function AIScanEditModal({
       fatPerGram: fat / w,
     };
   };
-
   // Initialize data based on presetIndex or Gemini analysis
   useEffect(() => {
     if (!isOpen) return;
 
     // Gemini AI analysis data
     if (presetIndex === -1 && geminiAnalysis) {
-      setMealName(geminiAnalysis.mealName);
+      console.log('[AIScanEditModal] set AI data', { mealName: geminiAnalysis.mealName, ingredients: geminiAnalysis.ingredients });
+      // AI 识别失败时返回"无食物信息"等占位文本，改为空字符串以显示 placeholder
+      const FAILED_NAMES = ['无食物信息', '无食物信息。', '未知食物', ''];
+      const name = (geminiAnalysis.mealName || '').trim();
+      setMealName(FAILED_NAMES.includes(name) ? '' : geminiAnalysis.mealName);
       setIngredients(geminiAnalysis.ingredients.map(ing =>
         makeIngredient(ing.name, ing.weight, ing.calories, ing.protein, ing.carbs, ing.fat)
       ));
@@ -143,7 +153,7 @@ export default function AIScanEditModal({
         makeIngredient('低卡醋汁', 30, 130, 3, 7, 2.5),
       ]);
     }
-  }, [isOpen, presetIndex]);
+  }, [isOpen, presetIndex, geminiAnalysis]);
 
   // Dynamic loading text: switch to snack-search message after 2s
   const [loadingPhase, setLoadingPhase] = useState<'analyzing' | 'searching'>('analyzing');
@@ -160,10 +170,14 @@ export default function AIScanEditModal({
     return () => clearTimeout(timer);
   }, [geminiLoading]);
 
-  if (!isOpen) return null;
+  if (!isOpen) {
+    console.log('[RENDER CHECK] return null, isOpen=%s', isOpen);
+    return null;
+  }
 
   // Loading state while waiting for Gemini
   if (geminiLoading) {
+    console.log('[RENDER CHECK] return loading, geminiLoading=%s presetIndex=%s', geminiLoading, presetIndex);
     const loadingTitle = loadingPhase === 'searching'
       ? 'AI 正在查询零食营养数据库，请稍候...'
       : 'AI 正在分析食物...';
@@ -196,26 +210,23 @@ export default function AIScanEditModal({
       prev.map((ing) => (ing.id === id ? { ...ing, weight: validWeight } : ing))
     );
   };
-
   // Handle Name Change
   const handleNameChange = (id: string, newName: string) => {
     setIngredients((prev) =>
       prev.map((ing) => (ing.id === id ? { ...ing, name: newName } : ing))
     );
   };
-
   // Delete Ingredient
   const handleDeleteIngredient = (id: string) => {
     setIngredients((prev) => prev.filter((ing) => ing.id !== id));
   };
-
   // Toggle unit between g and ml
   const handleUnitToggle = (id: string) => {
     setIngredients((prev) =>
       prev.map((ing) => (ing.id === id ? { ...ing, unit: ing.unit === 'g' ? 'ml' : 'g' } : ing))
     );
   };
-
+  console.log('[RENDER CHECK]', { isOpen, geminiLoading, presetIndex, hasGeminiAnalysis: !!geminiAnalysis, mealName, ingredientsCount: ingredients.length });
   // Add Custom Ingredient
   const handleAddIngredient = () => {
     const newIng: EditableIngredient = {
@@ -230,7 +241,6 @@ export default function AIScanEditModal({
     };
     setIngredients((prev) => [...prev, newIng]);
   };
-
   // Dynamic Calculations
   const calculatedStats = ingredients.reduce(
     (acc, ing) => {
@@ -251,6 +261,7 @@ export default function AIScanEditModal({
 
   const totalCalories = Math.round(calculatedStats.calories);
   const effectiveCalories = manualCalories !== null ? manualCalories : totalCalories;
+  console.log('[CAL CHECK]', { manualCalories, totalCalories, effectiveCalories });
   const totalProtein = Math.round(calculatedStats.protein * 10) / 10;
   const totalCarbs = Math.round(calculatedStats.carbs * 10) / 10;
   const totalFat = Math.round(calculatedStats.fat * 10) / 10;
@@ -302,7 +313,13 @@ export default function AIScanEditModal({
 
     onConfirm(finalAnalysis);
   };
-
+  console.log('[FINAL STATE]', {
+    mealName,
+    ingredients,
+    geminiLoading,
+    presetIndex,
+    geminiAnalysis
+  });
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
       {/* Absolute click-outside handler */}
@@ -379,7 +396,7 @@ export default function AIScanEditModal({
                 value={servingSize}
                 onChange={(e) => setServingSize(e.target.value)}
                 className="w-full px-3.5 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-800 bg-gray-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#8B5CF6]/20 focus:border-[#8B5CF6] transition-all"
-                placeholder="规格"
+                placeholder="无规格"
               />
             </div>
             <button

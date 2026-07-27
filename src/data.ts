@@ -10,7 +10,7 @@ export const INITIAL_WEIGHTS: WeightEntry[] = [
   { day: '今日', weight: 72.5, isToday: true }
 ];
 
-export const INITIAL_MEALS: MealRecord[] = [
+const INITIAL_MEALS: MealRecord[] = [
   {
     category: 'breakfast',
     name: '早餐',
@@ -234,7 +234,7 @@ export const INITIAL_MEALS_BY_DAY: Record<string, MealRecord[]> = {
   '今日': INITIAL_MEALS
 };
 
-export const INITIAL_WORKOUTS: WorkoutItem[] = [
+const INITIAL_WORKOUTS: WorkoutItem[] = [
   {
     id: 'w1',
     type: '户外跑步',

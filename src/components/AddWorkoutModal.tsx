@@ -152,7 +152,7 @@ export default function AddWorkoutModal({ isOpen, onClose, onAdd, weight }: AddW
                 </div>
                 <div>
                   <span className="text-[11px] font-extrabold text-[#8B5CF6] tracking-wider block uppercase">
-                    AI 智能热量预测
+                    智能热量预测
                   </span>
                   <p className="text-[10px] text-gray-400 mt-0.5">
                     根据项目和时间自动拟合

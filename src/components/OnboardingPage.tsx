@@ -40,10 +40,6 @@ export default function OnboardingPage() {
         hasCompletedSurvey: true,
       } as any);
       setDone(true);
-      // 强制刷新确保跳转
-      setTimeout(() => {
-        window.location.reload();
-      }, 1500);
     } catch (err) {
       console.error('Failed to save survey:', err);
     } finally {
@@ -127,7 +123,7 @@ export default function OnboardingPage() {
 
         {/* Step content */}
         <div className="flex-1 flex flex-col justify-center">
-          <AnimatePresence mode="wait">
+          <AnimatePresence>
             {step === 1 && (
               <motion.div key="step1" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.2 }} className="bg-white rounded-[24px] p-6 border border-purple-100/40 shadow-xl">
                 <div className="grid grid-cols-2 gap-4">

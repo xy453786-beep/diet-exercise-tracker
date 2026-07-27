@@ -470,7 +470,8 @@ export async function analyzeFoodByName(
     const per100gCalories = cached.per100g?.calories || Math.round(kcal / grams * 100);
     return {
       foodName: cached.food_name,
-      matchedFood: cached.food_name,
+	      mealName: cached.food_name,
+	      matchedFood: cached.food_name,
       category: classifyFoodSimple(cached.food_name),
       weight: grams,
       source: 'database',
@@ -551,7 +552,8 @@ export async function analyzeFoodByName(
 
   return {
     foodName: sourceResult.food_name,
-    matchedFood: sourceResult.food_name,
+	    mealName: sourceResult.food_name,
+	    matchedFood: sourceResult.food_name,
     category: classifyFoodSimple(sourceResult.food_name),
     weight: grams,
     source: src,

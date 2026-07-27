@@ -187,25 +187,36 @@ export default function App() {
 
   const handleAddWater = async (cupSize: number) => {
     const date = dayLabelToDate(selectedDay);
+    const prevValue = waterIntakes[selectedDay] ?? 0;
+    const newValue = Math.min(4000, prevValue + cupSize);
+
+    // Optimistic: 立即更新 UI
+    setWaterIntakes((prev) => ({ ...prev, [selectedDay]: newValue }));
+
+    // 后台同步（用 set 模式直接写最终量，避免串行读-写）
     try {
-      await endpoints.setWater(date, cupSize, 'add');
-    } catch { /* continue */ }
-    setWaterIntakes((prev) => ({
-      ...prev,
-      [selectedDay]: Math.min(4000, (prev[selectedDay] ?? 0) + cupSize),
-    }));
+      await endpoints.setWater(date, newValue);
+    } catch {
+      // 失败回滚
+      setWaterIntakes((prev) => ({ ...prev, [selectedDay]: prevValue }));
+    }
   };
 
   const handleSubtractWater = async (cupSize: number) => {
     const date = dayLabelToDate(selectedDay);
-    const newAmount = Math.max(0, (waterIntakes[selectedDay] ?? 0) - cupSize);
+    const prevValue = waterIntakes[selectedDay] ?? 0;
+    const newValue = Math.max(0, prevValue - cupSize);
+
+    // Optimistic: 立即更新 UI
+    setWaterIntakes((prev) => ({ ...prev, [selectedDay]: newValue }));
+
+    // 后台同步
     try {
-      await endpoints.setWater(date, newAmount, 'set');
-    } catch { /* continue */ }
-    setWaterIntakes((prev) => ({
-      ...prev,
-      [selectedDay]: newAmount,
-    }));
+      await endpoints.setWater(date, newValue);
+    } catch {
+      // 失败回滚
+      setWaterIntakes((prev) => ({ ...prev, [selectedDay]: prevValue }));
+    }
   };
 
   const handleAddFoodItem = async (category: MealCategory, item: any) => {
@@ -317,9 +328,11 @@ export default function App() {
     setGeminiError(null);
 
     // 使用后端 API：图片上传 → Qwen-VL 视觉识别 → 联网搜索 → 营养计算
+    console.log('[handleScanComplete] 设置 geminiLoading=true');
     setGeminiLoading(true);
     try {
       const analysis = await analyzeFoodImageBackend(imageDataUrl);
+      console.log('[handleScanComplete] 后端返回结果:', analysis);
       setGeminiAnalysis(analysis);
       setActiveScanPresetIndex(-1); // Signal: use AI data
       setEditingScanResult(true);
@@ -329,6 +342,7 @@ export default function App() {
       setActiveScanPresetIndex(0);
       setEditingScanResult(true);
     } finally {
+      console.log('[handleScanComplete] finally执行');
       setGeminiLoading(false);
     }
   };

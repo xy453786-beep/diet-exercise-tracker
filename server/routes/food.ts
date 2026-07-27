@@ -2,6 +2,34 @@ import { Router, Request, Response } from 'express';
 import { requireAuth, optionalAuth } from '../middleware/auth.js';
 import { runPipeline, analyzeFoodByName } from '../services/food/pipeline.js';
 import { saveUserCorrection } from '../services/food/sources/cache.js';
+import { supabaseAdmin } from '../supabase/client.js';
+
+/**
+ * 将 base64 data URL 上传到 Supabase Storage，返回公开 URL。
+ * 使用 service_role key，无需用户认证。
+ */
+async function uploadDataUrlToStorage(dataUrl: string): Promise<string> {
+  const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, '');
+  const binaryStr = atob(base64Data);
+  const bytes = new Uint8Array(binaryStr.length);
+  for (let i = 0; i < binaryStr.length; i++) {
+    bytes[i] = binaryStr.charCodeAt(i);
+  }
+  const fileName = `food-${Date.now()}.jpg`;
+  const { data, error } = await supabaseAdmin.storage
+    .from('food-photos')
+    .upload(fileName, bytes, {
+      contentType: 'image/jpeg',
+      upsert: false,
+    });
+  if (error) {
+    throw new Error(`图片上传失败: ${error.message}`);
+  }
+  const { data: urlData } = supabaseAdmin.storage
+    .from('food-photos')
+    .getPublicUrl(data.path);
+  return urlData.publicUrl;
+}
 
 export const foodRouter = Router();
 
@@ -20,11 +48,23 @@ export const foodRouter = Router();
 // ============================================================
 foodRouter.post('/analyze-image', optionalAuth, async (req: Request, res: Response) => {
   try {
-    const { imageUrl } = req.body;
+    let { imageUrl } = req.body;
 
     if (!imageUrl || typeof imageUrl !== 'string' || !imageUrl.trim()) {
       res.status(400).json({ error: '请提供食物图片 URL' });
       return;
+    }
+
+    // 如果是 base64 data URL，先上传到 Supabase Storage 再处理
+    if (imageUrl.startsWith('data:image/')) {
+      try {
+        const storageUrl = await uploadDataUrlToStorage(imageUrl);
+        console.log(`[food/analyze-image] 已上传到 Storage: ${storageUrl}`);
+        imageUrl = storageUrl;
+      } catch (uploadErr: any) {
+        console.warn('[food/analyze-image] 上传到 Storage 失败，使用原始 data URL:', uploadErr.message);
+        // 继续使用 data URL，Qwen-VL 也支持
+      }
     }
 
     console.log('[food/analyze-image] 启动识别管线...');

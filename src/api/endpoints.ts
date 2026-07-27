@@ -1,37 +1,11 @@
 import { supabase } from './client';
 import type { MealRecord, MealItem, MealCategory, WorkoutItem, WeightEntry, AIDietAnalysis, FoodCompositionResult, FoodAnalyzeResult } from '../types';
+import { DEMO_USER_ID } from './constants';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
-// Cached user ID — use getSession() (local, no network) to avoid API call per operation
-let _cachedUserId: string | null = null;
-
-async function getUserId(): Promise<string> {
-  if (_cachedUserId) return _cachedUserId;
-  // getSession reads from local storage, no network request
-  const { data: { session } } = await supabase.auth.getSession();
-  if (session?.user?.id) {
-    _cachedUserId = session.user.id;
-    return _cachedUserId;
-  }
-  // Fallback: verify with server
-  const { data: { user } } = await supabase.auth.getUser();
-  if (user?.id) {
-    _cachedUserId = user.id;
-    return _cachedUserId;
-  }
-  // Fallback: 本地离线模式（无 Supabase 会话时）
-  const localId = localStorage.getItem('local_user_id');
-  if (localId) {
-    _cachedUserId = localId;
-    return _cachedUserId;
-  }
-  throw new Error('未登录');
-}
-
-// Clear cache on logout (called from AuthContext)
-export function clearUserIdCache(): void {
-  _cachedUserId = null;
+function getUserId(): string {
+  return DEMO_USER_ID;
 }
 
 const MEAL_META: Record<string, { name: string; icon: string }> = {
@@ -370,32 +344,13 @@ export async function getWater(from: string, to: string): Promise<Record<string,
   return intakes;
 }
 
-export async function setWater(date: string, amount: number, mode: 'set' | 'add' = 'set'): Promise<void> {
+export async function setWater(date: string, amount: number): Promise<void> {
   const userId = await getUserId();
+  const { error } = await supabase
+    .from('water_intakes')
+    .upsert({ user_id: userId, entry_date: date, amount_ml: Math.max(0, amount) }, { onConflict: 'user_id,entry_date' });
 
-  if (mode === 'add') {
-    const { data: existing } = await supabase
-      .from('water_intakes')
-      .select('amount_ml')
-      .eq('user_id', userId)
-      .eq('entry_date', date)
-      .maybeSingle();
-
-    const current = existing?.amount_ml || 0;
-    const newAmount = Math.min(4000, current + amount);
-
-    const { error } = await supabase
-      .from('water_intakes')
-      .upsert({ user_id: userId, entry_date: date, amount_ml: newAmount }, { onConflict: 'user_id,entry_date' });
-
-    if (error) throw new Error('更新饮水失败');
-  } else {
-    const { error } = await supabase
-      .from('water_intakes')
-      .upsert({ user_id: userId, entry_date: date, amount_ml: Math.max(0, amount) }, { onConflict: 'user_id,entry_date' });
-
-    if (error) throw new Error('更新饮水失败');
-  }
+  if (error) throw new Error('更新饮水失败');
 }
 
 // ==================== User Metrics (动态 BMR/TDEE) ====================
@@ -434,6 +389,7 @@ export interface WeightPrediction {
   predicted_weight_30d_jin: number;
   base_weight_kg: number;
   avg_daily_surplus: number;
+  correction_factor: number;
   updated_at: string;
 }
 
@@ -442,7 +398,7 @@ export async function getWeightPredictions(): Promise<WeightPrediction | null> {
   const userId = await getUserId();
   const { data } = await supabase
     .from('weight_predictions')
-    .select('user_id, predicted_weight_7d_jin, predicted_weight_30d_jin, base_weight_kg, avg_daily_surplus, updated_at')
+    .select('user_id, predicted_weight_7d_jin, predicted_weight_30d_jin, base_weight_kg, avg_daily_surplus, correction_factor, updated_at')
     .eq('user_id', userId)
     .maybeSingle();
   return data;
@@ -455,39 +411,7 @@ export async function recalculatePredictions(): Promise<void> {
   if (error) console.error('重算预测失败:', error);
 }
 
-export async function saveAnalysis(analysis: AIDietAnalysis): Promise<{ id: string }> {
-  const userId = await getUserId();
-  const { data, error } = await supabase
-    .from('ai_analyses')
-    .insert({ user_id: userId, analysis_data: analysis })
-    .select('id')
-    .single();
-
-  if (error || !data) throw new Error('保存分析失败');
-  return { id: data.id };
-}
-
-export async function getRecentAnalyses(limit = 10): Promise<AIDietAnalysis[]> {
-  const userId = await getUserId();
-  const { data, error } = await supabase
-    .from('ai_analyses')
-    .select('analysis_data')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(limit);
-
-  if (error) throw new Error('查询分析记录失败');
-  return (data || []).map((r) => r.analysis_data);
-}
-
 // ==================== Food Composition Search & Analyze ====================
-
-/** 获取认证 Header（供 Express API 调用） */
-async function getAuthHeaders(): Promise<Record<string, string>> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
 
 /**
  * 搜索食物成分表（RAG 检索）。
@@ -513,13 +437,9 @@ export async function analyzeFood(
   foodName: string,
   weight?: number
 ): Promise<FoodAnalyzeResult> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(await getAuthHeaders()),
-  };
   const res = await fetch(`${API_BASE}/api/food/analyze`, {
     method: 'POST',
-    headers,
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ foodName, weight }),
   });
   if (!res.ok) {

@@ -2,8 +2,10 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { supabase } from '../api/client';
 import type { User as AppUser } from '../types';
 import * as profileApi from '../api/endpoints';
-import { clearUserIdCache } from '../api/endpoints';
+import { DEMO_USER_ID } from '../api/constants';
 import type { UserMetrics, WeightPrediction } from '../api/endpoints';
+
+const DEMO_USER_PROFILE_KEY = 'demo_user_profile';
 
 interface AuthState {
   appUser: (AppUser & { id: string }) | null;
@@ -14,18 +16,51 @@ interface AuthState {
 
 interface AuthContextType extends AuthState {
   updateAppUser: (data: Partial<AppUser>) => Promise<void>;
-  /** 重载所有数据（匿名登录完成后调用） */
   reloadProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+/** localStorage 读写 demo 用户配置 */
+function loadLocalProfile(): Partial<AppUser> | null {
+  try {
+    const raw = localStorage.getItem(DEMO_USER_PROFILE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+function saveLocalProfile(data: Partial<AppUser>): void {
+  try {
+    localStorage.setItem(DEMO_USER_PROFILE_KEY, JSON.stringify(data));
+  } catch { /* quota exceeded — 静默忽略 */ }
+}
+
+/** 默认 appUser（未加载完成或查询失败时使用） */
+function defaultAppUser(local?: Partial<AppUser> | null): AppUser & { id: string } {
+  return {
+    id: DEMO_USER_ID,
+    username: 'Demo用户',
+    avatarUrl: '',
+    height: local?.height || 178,
+    weight: local?.weight ?? null,
+    gender: local?.gender || undefined,
+    age: local?.age || undefined,
+    activityLevel: local?.activityLevel || undefined,
+    hasCompletedSurvey: local?.hasCompletedSurvey ?? false,
+  };
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<AuthState>({
-    appUser: null,
-    loading: true,
-    userMetrics: null,
-    weightPredictions: null,
+  const [state, setState] = useState<AuthState>(() => {
+    // 首次渲染：从 localStorage 加载已保存的 profile，无需等待任何异步操作
+    const local = loadLocalProfile();
+    return {
+      appUser: defaultAppUser(local),
+      loading: false,
+      userMetrics: null,
+      weightPredictions: null,
+    };
   });
 
   // Realtime channel refs for cleanup
@@ -44,7 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  /** 从 Supabase 拉取用户信息 + 指标数据 */
+  /** 从 Supabase 拉取用户配置 + 指标数据（失败时使用 localStorage / 默认值） */
   const fetchProfile = useCallback(async () => {
     try {
       const profile = await profileApi.getProfile();
@@ -55,6 +90,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         metrics = await profileApi.getUserMetrics();
         if (!metrics) {
+          // RPC update_metrics_for_user 依赖 weight_entries 表，
+          // 如果没有体重记录则先创建一条默认记录
+          if (!profile.weight) {
+            const today = new Date().toISOString().split('T')[0];
+            const defaultWeight = state.appUser?.weight || 70;
+            await profileApi.upsertWeight(today, defaultWeight);
+          }
           await profileApi.recalculateMetrics();
           metrics = await profileApi.getUserMetrics();
         }
@@ -74,22 +116,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.warn('获取预测失败:', e);
       }
 
-      setState({
+      setState((prev) => ({
+        ...prev,
         appUser: {
+          ...prev.appUser,
           id: userId,
           username: profile.username,
           avatarUrl: profile.avatarUrl,
           height: profile.height,
           weight: profile.weight,
-          gender: profile.gender,
-          age: profile.age,
-          activityLevel: profile.activityLevel as any,
-          hasCompletedSurvey: profile.hasCompletedSurvey,
+          gender: profile.gender ?? prev.appUser?.gender,
+          age: profile.age ?? prev.appUser?.age,
+          activityLevel: (profile.activityLevel as any) ?? prev.appUser?.activityLevel,
+          hasCompletedSurvey: profile.hasCompletedSurvey || prev.appUser?.hasCompletedSurvey || false,
         },
         loading: false,
         userMetrics: metrics,
         weightPredictions: predictions,
-      });
+      }));
 
       // 订阅 Realtime：user_metrics 变化时自动更新
       if (userId && !metricsChannelRef.current) {
@@ -141,76 +185,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         predictionsChannelRef.current = predChannel;
       }
     } catch (err) {
-      console.error('Failed to fetch profile:', err);
-      // 如果 Supabase 查询失败（例如 RLS 对匿名用户未开放），回退到本地用户
-      createLocalUser();
+      // Supabase 查询失败（RLS 未配置或 demo 用户不存在），使用 localStorage + 默认值
+      console.warn('Supabase 查询失败，使用本地数据:', err);
+      const local = loadLocalProfile();
+      setState((prev) => ({
+        ...prev,
+        appUser: defaultAppUser(local),
+        loading: false,
+      }));
     }
   }, []);
 
-  /** 创建本地离线用户（匿名登录失败或 Supabase 不可用时） */
-  const createLocalUser = useCallback(() => {
-    cleanupChannels();
-    const stored = localStorage.getItem('local_user_data');
-    let localData: Record<string, any> = {};
-    try { localData = stored ? JSON.parse(stored) : {}; } catch {}
-
-    const localId = localStorage.getItem('local_user_id') || crypto.randomUUID();
-    localStorage.setItem('local_user_id', localId);
-
-    setState({
-      appUser: {
-        id: localId,
-        username: localData.username || '访客',
-        avatarUrl: localData.avatarUrl || '',
-        height: localData.height || 175,
-        weight: localData.weight || null,
-        gender: localData.gender || undefined,
-        age: localData.age || undefined,
-        activityLevel: localData.activityLevel || undefined,
-        hasCompletedSurvey: localData.hasCompletedSurvey || false,
-      },
-      loading: false,
-      userMetrics: null,
-      weightPredictions: null,
-    });
-  }, [cleanupChannels]);
-
-  /** 初始化：自动匿名登录 */
-  const initAuth = useCallback(async () => {
-    try {
-      // 先检查是否有已有会话
-      const { data: sessionData } = await supabase.auth.getSession();
-
-      if (sessionData.session) {
-        // 已有会话，直接加载数据
-        await fetchProfile();
-        return;
-      }
-
-      // 尝试匿名登录
-      const { data, error } = await supabase.auth.signInAnonymously();
-      if (error || !data.session) {
-        console.warn('匿名登录不可用，使用本地模式:', error?.message);
-        createLocalUser();
-        return;
-      }
-
-      // 匿名登录成功，加载数据
-      console.log('[Auth] 匿名登录成功');
-      await fetchProfile();
-    } catch (err: any) {
-      console.warn('初始化认证失败，使用本地模式:', err?.message);
-      createLocalUser();
-    }
-  }, [fetchProfile, createLocalUser]);
-
   useEffect(() => {
-    initAuth();
-
+    fetchProfile();
     return () => {
       cleanupChannels();
     };
-  }, [initAuth, cleanupChannels]);
+  }, [fetchProfile, cleanupChannels]);
 
   const reloadProfile = useCallback(async () => {
     setState((prev) => ({ ...prev, loading: true }));
@@ -224,18 +215,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       appUser: prev.appUser ? { ...prev.appUser, ...data } : null,
     }));
 
-    // 如果是本地模式，存到 localStorage
-    const session = await supabase.auth.getSession();
-    if (!session.data.session) {
-      const stored = JSON.parse(localStorage.getItem('local_user_data') || '{}');
-      localStorage.setItem('local_user_data', JSON.stringify({ ...stored, ...data }));
-    }
+    // 持久化到 localStorage（离线时也可用）
+    const current = loadLocalProfile() || {};
+    saveLocalProfile({ ...current, ...data });
 
-    // 后台持久化到 Supabase，失败不阻塞
+    // 在后台持久化到 Supabase，失败不阻塞
     try {
       await profileApi.updateProfile(data);
     } catch (err) {
-      console.error('Failed to update profile (UI already updated):', err);
+      console.warn('同步到 Supabase 失败（数据已保存到本地）:', err);
     }
   }, []);
 

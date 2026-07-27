@@ -42,63 +42,63 @@ export default function DietPage({
     <div className="space-y-4 pb-24 px-4 pt-4 relative animate-fade-in">
       
       {/* Top Calories Card */}
-      <div className="bg-white/70 backdrop-blur-md border border-white/50 rounded-[16px] p-4 shadow-sm">
-        <span className="text-[12px] font-semibold text-[#6B7280] block mb-1">今日摄入热量</span>
-        <div className="flex justify-between items-baseline mb-2">
+      <div className="bg-white/70 backdrop-blur-md border border-white/50 rounded-[16px] p-3 shadow-sm">
+        <span className="text-[11px] font-semibold text-[#6B7280] block mb-0.5">今日摄入热量</span>
+        <div className="flex justify-between items-baseline mb-1.5">
           <div className="flex items-baseline gap-1">
-            <span className="text-[32px] font-black text-[#111111]">{totalCalories}</span>
-            <span className="text-[14px] text-gray-400 font-semibold">/ {goalCalories} kcal</span>
+            <span className="text-[28px] font-black text-[#111111]">{totalCalories}</span>
+            <span className="text-[12px] text-gray-400 font-semibold">/ {goalCalories} kcal</span>
           </div>
-          <span className="text-[11px] font-semibold text-[#8B5CF6] flex items-center gap-1 bg-[#F3EEFF]/80 backdrop-blur-sm px-2 py-0.5 rounded-full">
-            <Scale size={11} />
+          <span className="text-[10px] font-semibold text-[#8B5CF6] flex items-center gap-1 bg-[#F3EEFF]/80 backdrop-blur-sm px-2 py-0.5 rounded-full">
+            <Scale size={10} />
             剩余 {remainingCalories > 0 ? remainingCalories : 0} kcal
           </span>
         </div>
 
         {/* Progress Bar */}
-        <div className="w-full h-2 bg-gray-200/50 rounded-full overflow-hidden mb-4">
-          <div 
+        <div className="w-full h-1.5 bg-gray-200/50 rounded-full overflow-hidden mb-2">
+          <div
             className="h-full bg-[#8B5CF6] transition-all duration-500 rounded-full"
             style={{ width: `${calPercentage}%` }}
           />
         </div>
 
         {/* Macronutrients Stacked Row Layout */}
-        <div className="space-y-2.5 bg-white/50 backdrop-blur-sm border border-white/40 rounded-xl p-3">
+        <div className="space-y-1.5 bg-white/50 backdrop-blur-sm border border-white/40 rounded-xl p-2.5">
           {/* Protein */}
-          <div className="flex items-center gap-3 text-[11px]">
-            <span className="text-gray-500 font-bold w-12 flex-shrink-0 text-left">蛋白质</span>
-            <div className="flex-1 h-1.5 bg-gray-200/50 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-[#8B5CF6] transition-all duration-500 rounded-full" 
+          <div className="flex items-center gap-2 text-[10px]">
+            <span className="text-gray-500 font-bold w-10 flex-shrink-0 text-left">蛋白质</span>
+            <div className="flex-1 h-1 bg-gray-200/50 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-[#8B5CF6] transition-all duration-500 rounded-full"
                 style={{ width: `${Math.min(100, (totalProtein / goalProtein) * 100)}%` }}
               />
             </div>
-            <span className="font-extrabold text-gray-800 w-20 text-right">{totalProtein}g / {goalProtein}g</span>
+            <span className="font-extrabold text-gray-800 w-16 text-right">{totalProtein}g / {goalProtein}g</span>
           </div>
 
           {/* Carbs */}
-          <div className="flex items-center gap-3 text-[11px]">
-            <span className="text-gray-500 font-bold w-12 flex-shrink-0 text-left">碳水</span>
-            <div className="flex-1 h-1.5 bg-gray-200/50 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-black transition-all duration-500 rounded-full" 
+          <div className="flex items-center gap-2 text-[10px]">
+            <span className="text-gray-500 font-bold w-10 flex-shrink-0 text-left">碳水</span>
+            <div className="flex-1 h-1 bg-gray-200/50 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-black transition-all duration-500 rounded-full"
                 style={{ width: `${Math.min(100, (totalCarbs / goalCarbs) * 100)}%` }}
               />
             </div>
-            <span className="font-extrabold text-gray-800 w-20 text-right">{totalCarbs}g / {goalCarbs}g</span>
+            <span className="font-extrabold text-gray-800 w-16 text-right">{totalCarbs}g / {goalCarbs}g</span>
           </div>
 
           {/* Fat */}
-          <div className="flex items-center gap-3 text-[11px]">
-            <span className="text-gray-500 font-bold w-12 flex-shrink-0 text-left">脂肪</span>
-            <div className="flex-1 h-1.5 bg-gray-200/50 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-gray-400 transition-all duration-500 rounded-full" 
+          <div className="flex items-center gap-2 text-[10px]">
+            <span className="text-gray-500 font-bold w-10 flex-shrink-0 text-left">脂肪</span>
+            <div className="flex-1 h-1 bg-gray-200/50 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gray-400 transition-all duration-500 rounded-full"
                 style={{ width: `${Math.min(100, (totalFat / goalFat) * 100)}%` }}
               />
             </div>
-            <span className="font-extrabold text-gray-800 w-20 text-right">{totalFat}g / {goalFat}g</span>
+            <span className="font-extrabold text-gray-800 w-16 text-right">{totalFat}g / {goalFat}g</span>
           </div>
         </div>
       </div>
@@ -167,13 +167,13 @@ export default function DietPage({
                 ))}
               </div>
 
-              {/* Add Meal button */}
+              {/* Add Meal button — 整条可点 */}
               <button
                 id={`add-food-${meal.category}-btn`}
                 onClick={() => onOpenScanner(meal.category)}
-                className="w-full py-2.5 rounded-xl border border-dashed border-white/60 hover:border-[#8B5CF6]/30 bg-white/40 hover:bg-[#F3EEFF]/40 text-gray-600 hover:text-[#8B5CF6] font-semibold text-xs flex items-center justify-center gap-1 transition-all"
+                className="w-full py-4 rounded-xl border border-dashed border-white/60 hover:border-[#8B5CF6]/30 bg-white/40 hover:bg-[#F3EEFF]/40 text-gray-600 hover:text-[#8B5CF6] font-semibold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-[0.99]"
               >
-                <Plus size={14} />
+                <Plus size={16} />
                 添加饮食
               </button>
             </div>
