@@ -18,7 +18,7 @@ export const foodRouter = Router();
 //
 // Body: { imageUrl: string }
 // ============================================================
-foodRouter.post('/analyze-image', requireAuth, async (req: Request, res: Response) => {
+foodRouter.post('/analyze-image', optionalAuth, async (req: Request, res: Response) => {
   try {
     const { imageUrl } = req.body;
 

@@ -57,26 +57,33 @@ export async function analyzeFoodImageBackend(
 ): Promise<ZhipuFoodAnalysis> {
   const API_BASE = (import.meta as any).env?.VITE_API_URL || '';
 
-  // Step 1: 检查是否已认证（匿名登录或常规登录）
+  // Step 1: 获取认证状态（有 session 时用于上传图片到 Supabase Storage）
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
-  if (!token) {
-    throw new Error('当前为离线模式，AI 扫描需要联网。请确保 Supabase 开启了匿名登录。');
-  }
 
-  // Step 2: 上传图片到 Supabase Storage
-  const imageUrl = await uploadImageToStorage(imageDataUrl);
+  // Step 2: 上传图片到 Supabase Storage（有 session 时优先使用存储 URL）
+  let imageUrl: string;
+  try {
+    imageUrl = await uploadImageToStorage(imageDataUrl);
+  } catch {
+    // 无 Supabase session 时使用原始 data URL 直传后端处理
+    imageUrl = imageDataUrl;
+  }
 
   // Step 3: 调用后端分析接口（15s 超时以适应联网搜索）
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 15000);
 
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
   const response = await fetch(`${API_BASE}/api/food/analyze-image`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
+    headers,
     body: JSON.stringify({ imageUrl }),
     signal: controller.signal,
   }).finally(() => clearTimeout(timeoutId));
